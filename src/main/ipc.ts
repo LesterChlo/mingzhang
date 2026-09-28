@@ -22,11 +22,13 @@ import {
   writeConfidenceThreshold,
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
+import { listMonthSummaries } from './domain/reports'
 import { applyClassify, buildClassifyProposal, undoClassify } from './domain/classify'
 import type {
   BatchResultSummaryDTO,
   ClassifyAssignmentInput,
   LedgerPageDTO,
+  MonthSummaryDTO,
   PendingItemDTO,
 } from '../shared/types'
 
@@ -321,6 +323,14 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     // 不传月份 = 上一个自然月（既有行为，收件箱右栏「上月对照」依赖）；传 'YYYY-MM' = 该月月报。
     const report = reportForMonth(db, month, previousMonth(new Date()))
     return report
+  })
+
+  // 报告屏「过去几个月」网格：一条聚合 SQL 出近 N 个月（含空月），免得进屏打 12 发 latestReport。
+  // 账本未就绪 → 抛错（渲染层据此显示「报告生成失败 + 重新生成」，不拿空数组冒充"没有数据"）。
+  ipcMain.handle('mz:reportMonths', (_e, count?: number): MonthSummaryDTO[] => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return listMonthSummaries(db, count ?? 12)
   })
 
   // 账户列表（账户屏 + 账本屏账户筛选下拉）。accounts 表无期初余额列 → 不返回余额字段。

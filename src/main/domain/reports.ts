@@ -82,6 +82,71 @@ export function buildReport(db: Database, year: number, month: number): MonthRep
   }
 }
 
+/** 历史月份小卡的一条（报告屏「过去几个月」网格；mz:reportMonths 的返回元素）。 */
+export interface MonthSummary {
+  /** 'YYYY-MM' */
+  month: string
+  expenseCents: number
+  incomeCents: number
+  /** 该月已确认收支总笔数（支出 + 收入，与 buildReport 的 empty 口径同源）。 */
+  count: number
+  /** count === 0 —— 空月也要占一张卡，网格才恒为 N 张。 */
+  empty: boolean
+}
+
+/** 网格最多回溯几个月（挡住「传 10000 个月」这类离谱入参）。 */
+export const MAX_SUMMARY_MONTHS = 24
+
+/**
+ * 近 count 个自然月的轻量汇总（含空月，从早到晚排）。
+ *
+ * 口径与 buildReport 一致：只统计 v_reportable_transactions（已确认的支出/收入），
+ * 转账/不计收支/待确认/软删除都不进。一条 GROUP BY 聚合 SQL 出全部有数月份，
+ * 没有数的月份在内存里补零（网格因此恒为 count 张卡，不必靠"有数据才有卡"）。
+ * 纯读：不写 transactions / audit_log / settings。
+ */
+export function listMonthSummaries(db: Database, count = 12, base: Date = new Date()): MonthSummary[] {
+  const n = Math.trunc(count)
+  if (!Number.isFinite(count) || n < 1 || n > MAX_SUMMARY_MONTHS) {
+    throw new Error(`月份数应为 1~${MAX_SUMMARY_MONTHS} 的整数，收到「${String(count)}」`)
+  }
+  const pad = (x: number) => String(x).padStart(2, '0')
+  const months: string[] = []
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1)
+    months.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`)
+  }
+
+  const rows = db
+    .prepare(
+      "SELECT substr(occurred_at,1,7) AS month," +
+        " COALESCE(SUM(CASE WHEN type='expense' THEN amount_cents ELSE 0 END),0) AS expense_cents," +
+        " COALESCE(SUM(CASE WHEN type='income' THEN amount_cents ELSE 0 END),0) AS income_cents," +
+        ' COUNT(*) AS n FROM v_reportable_transactions' +
+        ' WHERE substr(occurred_at,1,7) BETWEEN ? AND ?' +
+        ' GROUP BY month',
+    )
+    .all(months[0], months[months.length - 1]) as unknown as {
+    month: string
+    expense_cents: number
+    income_cents: number
+    n: number
+  }[]
+
+  const byMonth = new Map(rows.map((r) => [String(r.month), r]))
+  return months.map((month) => {
+    const r = byMonth.get(month)
+    const n = r ? Number(r.n) : 0
+    return {
+      month,
+      expenseCents: r ? Number(r.expense_cents) : 0,
+      incomeCents: r ? Number(r.income_cents) : 0,
+      count: n,
+      empty: n === 0,
+    }
+  })
+}
+
 export function reportText(report: MonthReport): string {
   const yuan = report.totalExpenseCents / 100
   const income = report.totalIncomeCents / 100

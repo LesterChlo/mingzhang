@@ -122,7 +122,16 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
             />
           )}
           {view === 'ledger' && <LedgerView initialFilter={ledgerInitialFilter} />}
-          {view === 'report' && <ReportView />}
+          {view === 'report' && (
+            <ReportView
+              // 报告屏点分类条 → 账本，并带上「该月 + 该分类」两个条件（走 LedgerView 既有的 initialFilter，
+              // 与结果条跳 needs_review 同一条路；账本屏自己的筛选条仍是唯一筛选入口）。
+              onGoLedger={({ month, category }) => {
+                setLedgerInitialFilter({ range: 'custom', customMonth: month, category })
+                setView('ledger')
+              }}
+            />
+          )}
           {view === 'accounts' && <AccountsView />}
           {view === 'settings' && (
             <SettingsRoute

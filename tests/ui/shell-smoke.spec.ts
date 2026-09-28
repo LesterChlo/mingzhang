@@ -70,8 +70,9 @@ test('外壳② 五屏都可达（切屏后选中态跟随）', async () => {
   await expect(page.getByTestId('ledger-view')).toBeVisible()
   await expect(page.getByTestId('nav-ledger')).toHaveAttribute('aria-current', 'page')
 
+  // 报告屏也已是真实屏（不再是占位），断点相应改成 report-view —— 与外壳① 对收件箱、② 对账本的处理同口径。
   await page.getByTestId('nav-report').click()
-  await expect(page.getByTestId('view-placeholder')).toContainText('报告')
+  await expect(page.getByTestId('report-view')).toBeVisible()
 
   await page.getByTestId('nav-accounts').click()
   await expect(page.getByTestId('view-placeholder')).toContainText('账户')
@@ -420,7 +421,8 @@ test.describe('收件箱（真实数据）', () => {
     await expect(page.getByTestId('inbox-empty')).toContainText('收件箱是空的')
     // 空态必须给出路：主按钮能跳到本月报告
     await page.getByTestId('inbox-empty').getByRole('button', { name: '查看本月报告' }).click()
-    await expect(page.getByTestId('view-placeholder')).toContainText('报告')
+    // 报告屏从占位转真屏后，占位断点改成该屏视图根（与收件箱/账本同口径），语义不变或更强。
+    await expect(page.getByTestId('report-view')).toBeVisible()
     await page.getByTestId('nav-inbox').click()
 
     // 右栏三卡即使空态也在（本地数据 / 本月速览 / AI 记忆）

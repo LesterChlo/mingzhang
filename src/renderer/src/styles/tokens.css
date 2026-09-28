@@ -1,0 +1,107 @@
+/* 明账 · 设计 token 层（方向 A「收件箱」）
+ *
+ * 依据（数值逐字照抄，不自由发挥）：色彩 token / 字号层级 / 间距·圆角·阴影 / 动效基调，
+ * 并沿用设计稿里 :root 与 [data-theme="light"] 两组变量。
+ * 变量名沿用预览 HTML 既有命名（--bg-0 / --bg-1 / --bg-2 / --text-1 / --line / --accent …）。
+ *
+ * 作用域为什么是 .mz-shell 而不是 :root：
+ *   旧对话式 UI 的 styles.css 仍在加载，且它自己在 :root 定义了同名的 --accent(#3DA57F) 与
+ *   --warn(#C98A1F)。token 若放 :root 会把旧 UI 的配色顶掉（违反"旧组件本单保留、不变色"）。
+ *   挂在 .mz-shell 上则两套互不干扰；下一单删掉旧 styles.css 后，把选择器换成 :root 即可，
+ *   变量名与值一个字都不用改。
+ *
+ * 深色为默认；浅色靠 [data-theme="light"] 覆盖。
+ * 配置枚举与本层同口径（dark / light），无旧命名别名。
+ */
+
+.mz-shell {
+  color-scheme: dark;
+
+  /* ---------- §4.1 色彩 ---------- */
+  --bg-0: #0e1013; /* 窗口底色 */
+  --bg-1: #151920; /* 面板 / 卡片 */
+  --bg-2: #1c212b; /* 嵌套区 / hover 底 */
+  --bg-3: #232a36;
+  --line: #242b37; /* 1px 分隔线 / 卡片边框 */
+  --line-strong: #2e3644;
+  --text-1: #e8eaee; /* 主文字 / 支出金额 */
+  --text-2: #9ba3af; /* 次文字 */
+  /* C 单（对比度）：#8a93a0 → #9aa4b1。旧值在卡片底（--bg-1）上 5.67:1、
+     窗口底（--bg-0）上 6.13:1 —— 过 AA 但 12px 小字发虚；新值 6.98:1（bg-1 实测）。 */
+  --text-3: #9aa4b1; /* 弱文字 / placeholder */
+  --accent: #3ecf8e; /* 主强调 / 待入账绿 / 收入 */
+  --accent-dim: rgba(62, 207, 142, 0.12);
+  --warn: #e8b44c; /* 待核对黄 */
+  --warn-dim: rgba(232, 180, 76, 0.12);
+  --danger: #e5534b; /* 删除红 */
+  --danger-dim: rgba(229, 83, 75, 0.12);
+  --info: #6aa9ff; /* 批量 / 月报卡蓝 */
+  --info-dim: rgba(106, 169, 255, 0.12);
+  --on-accent: #06110c; /* 强调色上的文字（预览 HTML btn-primary） */
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4); /* 弹层 */
+
+  /* ---------- §4.2 字号层级（基准 14px） ---------- */
+  --font-sans: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --fs-t0: 32px; /* 报告大数字 */
+  --fs-t1: 20px; /* 页面标题、卡片总额 */
+  --fs-t2: 16px; /* 卡片金额 */
+  --fs-t3: 14px; /* 正文、列表主行、AI 提问 */
+  --fs-t4: 13px; /* 次要行、表单标签 */
+  --fs-t5: 12px; /* 辅助说明、依据行、角标、锁标 */
+  --fw-normal: 400;
+  --fw-strong: 600;
+
+  /* ---------- §4.3 间距（4 的倍数） ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --pad-card: 16px; /* 卡片内边距 */
+  --gap-card: 12px; /* 卡片间距 */
+  --pad-page: 24px; /* 页面边距 */
+  --gap-block: 32px; /* 区块间距 */
+
+  /* ---------- §4.3 圆角 ---------- */
+  --radius-tag: 4px; /* 标签 */
+  --radius-control: 6px; /* 按钮 / 输入框 */
+  --radius-card: 8px; /* 卡片 */
+  --radius-overlay: 10px; /* 弹层 / 覆盖层 */
+
+  /* ---------- §4.3 阴影 ---------- */
+  --shadow-toast: 0 4px 12px rgba(0, 0, 0, 0.32);
+
+  /* ---------- §4.5 动效 ---------- */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-hover: 80ms;
+  --dur-normal: 150ms;
+  --dur-page: 120ms; /* 页面切换 120ms 交叉淡入 */
+}
+
+/* ---------- §4.1 浅色覆盖 ---------- */
+[data-theme='light'] .mz-shell {
+  color-scheme: light;
+
+  --bg-0: #f7f8fa;
+  --bg-1: #ffffff;
+  --bg-2: #f0f2f5;
+  --bg-3: #e8ebef;
+  --line: #e2e5ea;
+  --line-strong: #d2d7de;
+  --text-1: #1a1d23;
+  --text-2: #5c6470;
+  /* C 单（对比度）：#646c78 → #5b636e。旧值在卡片底 5.31:1、窗口底 4.99:1，贴线过 AA；
+     新值 6.08:1（bg-1 实测），12px 小字不再发虚。 */
+  --text-3: #5b636e;
+  --accent: #0e9f6e;
+  --accent-dim: rgba(14, 159, 110, 0.1);
+  --warn: #b97f14;
+  --warn-dim: rgba(185, 127, 20, 0.1);
+  --danger: #d93a32;
+  --danger-dim: rgba(217, 58, 50, 0.1);
+  --info: #2b6fe0;
+  --info-dim: rgba(43, 111, 224, 0.1);
+  --on-accent: #06110c;
+  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
+}

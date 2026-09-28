@@ -1,0 +1,36 @@
+# node / TS
+node_modules/
+dist/
+out/
+release/
+*.tsbuildinfo
+
+# python 遗留物（老版工具链可能产生的）
+.venv/
+__pycache__/
+*.pyc
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+
+# 本地数据
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# UI 巡检产物
+tests/ui/results/
+tests/ui/report/
+
+# 杂项
+.scratch/
+*.log
+Thumbs.db
+.DS_Store
+
+# K3/WorkBuddy 工作副本的本地笔记（不进仓库）
+.workbuddy/

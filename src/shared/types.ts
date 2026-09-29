@@ -145,6 +145,17 @@ export interface ReportCardData {
   text: string
 }
 
+/** 报告屏「过去几个月」网格的一条（后端 reports.listMonthSummaries；空月也占一张卡）。 */
+export interface MonthSummaryDTO {
+  /** 'YYYY-MM' */
+  month: string
+  expenseCents: number
+  incomeCents: number
+  /** 该月已确认收支总笔数。 */
+  count: number
+  empty: boolean
+}
+
 export interface BatchGateCardData {
   kind: 'batch-gate'
   gateId: number
@@ -489,6 +500,8 @@ export interface MingZhangApi {
   listAccounts: () => Promise<AccountOption[]>
   /** 月报：传 'YYYY-MM' 取该月；不传取上一个自然月（收件箱右栏「上月对照」靠这条）。 */
   latestReport: (month?: string) => Promise<ReportCardData | null>
+  /** 报告屏历史月份网格：近 N 个月（含空月，从早到晚）。不传 N = 12。非法 N 由主进程报错。 */
+  reportMonths: (count?: number) => Promise<MonthSummaryDTO[]>
   /** 置信度直通阈值（settings.confidence_threshold，默认 0.7）。改高它才能逼出「待入账·AI 反问」卡。 */
   getConfidenceThreshold: () => Promise<number>
   /** 写置信度阈值；必须是 0~1 的数字，否则抛错且不落盘。 */

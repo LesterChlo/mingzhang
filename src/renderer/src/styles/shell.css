@@ -1896,3 +1896,288 @@
 .mz-br-link:hover {
   color: var(--text-1);
 }
+
+/* ============================================================================
+   报告屏（§3.3）：月份头 + 当月大卡（支出/收入大字 + 环比 + 预算条 + 分类条）
+   + 历史月份小卡网格。滚动归本区域（.mz-report），应用本体零页面滚动。
+   数值/颜色一律走 tokens.css 的 var()，本段不新增自由配色。
+   ========================================================================== */
+.mz-report {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: 20px var(--pad-page) var(--sp-6);
+  overflow-y: auto;
+}
+
+/* 加载骨架：标题 + 大卡 + 网格三段，形状与真实屏一致（不闪成白屏） */
+.mz-report-skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.mz-report-skel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap-card);
+}
+
+/* 月份头 */
+.mz-report-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.mz-report-title {
+  font-size: var(--fs-t1);
+  font-weight: var(--fw-strong);
+  min-width: 0;
+}
+.mz-report-nav {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-t3);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) var(--ease),
+    color var(--dur-hover) var(--ease);
+}
+.mz-report-nav:hover:not(:disabled) {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.mz-report-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 当月大卡 */
+.mz-report-hero {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-overlay);
+  padding: var(--sp-6);
+}
+.mz-report-hero-top {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gap-block);
+  flex-wrap: wrap;
+}
+.mz-report-lb {
+  font-size: var(--fs-t5);
+  color: var(--text-3);
+  margin-bottom: var(--sp-1);
+}
+.mz-report-expense {
+  font-size: var(--fs-t0);
+  font-weight: var(--fw-strong);
+  line-height: 1.1;
+}
+.mz-report-income {
+  font-size: var(--fs-t1);
+  font-weight: var(--fw-strong);
+  line-height: 1.1;
+  color: var(--accent);
+}
+.mz-report-stats {
+  margin-left: auto;
+  display: flex;
+  gap: var(--sp-8);
+}
+.mz-report-stat {
+  text-align: right;
+}
+.mz-report-stat-v {
+  font-size: var(--fs-t2);
+  font-weight: var(--fw-strong);
+}
+
+/* 环比胶囊：支出降了是好事（绿）、涨了提醒（黄）；上月没数据就说没数据 */
+.mz-report-delta {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  margin-top: var(--sp-2);
+  padding: 0 10px;
+  border-radius: var(--radius-overlay);
+  font-size: var(--fs-t5);
+}
+.mz-report-delta.is-down {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.mz-report-delta.is-up {
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+.mz-report-delta.is-none {
+  background: var(--bg-2);
+  color: var(--text-3);
+}
+
+/* 预算进度条（无预算整段不渲染） */
+.mz-report-budget {
+  margin-top: var(--sp-6);
+}
+.mz-report-budget-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-t5);
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+.mz-report-budget-row b {
+  color: var(--text-1);
+  font-weight: var(--fw-strong);
+}
+.mz-report-budget-remain {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: var(--fw-strong);
+}
+.mz-report-budget-track {
+  height: 8px;
+  margin-top: var(--sp-2);
+  background: var(--bg-2);
+  border-radius: var(--radius-tag);
+  overflow: hidden;
+}
+.mz-report-budget-fill {
+  height: 100%;
+  border-radius: var(--radius-tag);
+  background: var(--accent);
+  transition: width var(--dur-normal) var(--ease);
+}
+.mz-report-budget-fill.is-warn {
+  background: var(--warn);
+}
+.mz-report-budget-fill.is-over {
+  background: var(--danger);
+}
+
+/* 分类支出条：整行可点（跳账本），条宽按当月最大分类归一 */
+.mz-report-section-lb {
+  margin: var(--sp-6) 0 var(--sp-2);
+}
+.mz-report-cats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.mz-report-cat {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-t4);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-hover) var(--ease);
+}
+.mz-report-cat:hover {
+  background: var(--bg-2);
+}
+.mz-report-cat-nm {
+  width: 56px;
+  flex: none;
+}
+.mz-report-cat-track {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  background: var(--bg-2);
+  border-radius: var(--radius-tag);
+  overflow: hidden;
+}
+.mz-report-cat-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-tag);
+  background: var(--accent);
+}
+.mz-report-cat-val {
+  width: 168px;
+  flex: none;
+  text-align: right;
+  color: var(--text-2);
+  font-size: var(--fs-t5);
+}
+.mz-report-cat-val b {
+  color: var(--text-1);
+  font-weight: var(--fw-strong);
+}
+.mz-report-month-empty {
+  margin-top: var(--sp-6);
+  padding: var(--sp-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-3);
+  font-size: var(--fs-t4);
+}
+
+/* 历史月份小卡网格 */
+.mz-report-history-lb {
+  font-size: var(--fs-t4);
+  color: var(--text-2);
+  margin-bottom: var(--sp-3);
+}
+.mz-report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap-card);
+}
+.mz-report-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-3);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease);
+}
+.mz-report-card:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+.mz-report-card.is-active {
+  border-color: var(--accent);
+  background: var(--bg-2);
+}
+.mz-report-card-mn {
+  font-size: var(--fs-t5);
+  color: var(--text-2);
+}
+.mz-report-card-mv {
+  font-size: var(--fs-t2);
+  font-weight: var(--fw-strong);
+}
+.mz-report-card-sub {
+  font-size: var(--fs-t5);
+  color: var(--text-3);
+}

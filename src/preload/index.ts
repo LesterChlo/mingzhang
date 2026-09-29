@@ -23,6 +23,7 @@ const api: MingZhangApi = {
   listPending: () => ipcRenderer.invoke('mz:listPending'),
   listAccounts: () => ipcRenderer.invoke('mz:listAccounts'),
   latestReport: (month) => ipcRenderer.invoke('mz:latestReport', month),
+  reportMonths: (count) => ipcRenderer.invoke('mz:reportMonths', count),
   getConfidenceThreshold: () => ipcRenderer.invoke('mz:getConfidenceThreshold'),
   setConfidenceThreshold: (value) => ipcRenderer.invoke('mz:setConfidenceThreshold', value),
   getSettingsInfo: () => ipcRenderer.invoke('mz:getSettingsInfo'),

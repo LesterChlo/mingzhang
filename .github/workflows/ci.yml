@@ -1,13 +1,16 @@
 # 明账 · CI 门禁（issue #5）
 #
 # 跑的就是本地那同一组命令，不另造测试口径：
-#   check-and-test → npm run typecheck / build / test
-#   ui-test        → npm run ui-test（Electron 巡检；Linux runner 上用 xvfb 提供虚拟显示）
+#   check-and-test → npm run typecheck / build / test（ubuntu）
+#   ui-test        → npm run ui-test（Electron 巡检，windows runner）
 #
-# 两点口径说明：
+# 三点口径说明：
 #   ① 第一条检查不需要 Electron 运行时，用 ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过 ~100MB 的
 #      二进制下载；只有 ui-test 那条才装它。
-#   ② 单测在本机曾出现「并行 + 磁盘饱和」的 30s 超时假红（全是超时、0 条断言失败，串行即绿）。
+#   ② ui-test 跑在 windows-latest：应用的目标平台是 Windows，而 Linux runner 上 Electron
+#      起不来（实测首轮 ubuntu：firstWindow 30s 超时，窗口从未创建——Linux 无 keyring 时
+#      safeStorage 不可用，且容器里没有桌面会话）。门禁就该跑在目标平台上。
+#   ③ 单测在本机曾出现「并行 + 磁盘饱和」的 30s 超时假红（全是超时、0 条断言失败，串行即绿）。
 #      GitHub runner 是干净机器，先按默认并行跑；真挂了先按同口径判定，不盲目加超时。
 name: CI
 
@@ -46,8 +49,8 @@ jobs:
 
   ui-test:
     name: ui-test
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,8 +59,8 @@ jobs:
           cache: npm
       - name: 安装依赖（含 Electron 运行时）
         run: npm ci --no-audit --no-fund
-      - name: UI 巡检（xvfb 虚拟显示）
-        run: xvfb-run -a --server-args="-screen 0 1280x860x24" npm run ui-test
+      - name: UI 巡检（Electron 真实窗口）
+        run: npm run ui-test
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
       - name: 上传巡检报告（失败也传）

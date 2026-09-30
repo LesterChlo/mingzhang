@@ -4,6 +4,7 @@ import type { AppConfigDTO, ThemeName } from '../../../shared/types'
 import type { LedgerFilterState } from '../lib/ledgerFilter'
 import { SideNav } from './SideNav'
 import { CaptureBar } from './CaptureBar'
+import { ScrollIndicators } from './ScrollIndicators'
 import { InboxProvider, useInbox } from './inboxStore'
 import { PanelProvider, usePanel } from './panelStore'
 import { AccountsView } from '../views/AccountsView'
@@ -161,6 +162,9 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
           {toast.text}
         </div>
       )}
+
+      {/* T0930-1820 自绘滚动指示条：原生条已隐藏，这里在滚动时浮出细条（不占位、不拦指针） */}
+      <ScrollIndicators />
     </div>
   )
 }

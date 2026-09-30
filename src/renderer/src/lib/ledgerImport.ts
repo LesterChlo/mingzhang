@@ -73,7 +73,7 @@ export function parseDelimitedCsv(text: string, sep = ','): LedgerFileParse {
   if (cells.length === 0) return { ok: false, reason: '文件是空的或全是空行' }
   const headerIdx = cells.findIndex(looksLikeHeader)
   if (headerIdx < 0) {
-    return { ok: false, reason: `没找到账单表头（需包含"金额"以及"交易时间/交易对方"等列）。首行是：${cells[0].join(' | ').slice(0, 200)}` }
+    return { ok: false, reason: `没找到账单表头（需包含"金额"以及"交易时间/交易对方"等列；已自动尝试 UTF-8/GBK 解码）。首行是：${cells[0].join(' | ').slice(0, 200)}` }
   }
   return toParse(cells[headerIdx], cells.slice(headerIdx + 1))
 }
@@ -113,4 +113,21 @@ export function parseWechatXlsx(buf: ArrayBuffer | Uint8Array): LedgerFileParse 
     rows.push(cells)
   }
   return toParse(rows[0] ?? [], rows.slice(1))
+}
+
+/**
+ * 账单文本解码：UTF-8 优先（严格模式），失败回退 GB18030（GBK 超集），并去掉 BOM。
+ * 支付宝导出的 CSV 是 GB18030，硬编码 UTF-8 会让中文列名乱码、表头判定必然失败。
+ * 纯函数、无 Electron 依赖（TextDecoder 是平台内置，Chromium 与 Node 均支持 gb18030）。
+ */
+export function decodeBillText(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf)
+  let text: string | null = null
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    text = null
+  }
+  if (text === null) text = new TextDecoder('gb18030').decode(bytes)
+  return text.replace(/^\uFEFF/, '')
 }

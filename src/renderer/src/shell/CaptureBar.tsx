@@ -17,7 +17,7 @@ import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, 
 import { useInbox, type CaptureBill, type CaptureImage } from './inboxStore'
 import { usePanel } from './panelStore'
 import { classifyDroppedFile } from '../lib/captureFiles'
-import { parseDelimitedCsv, parseWechatXlsx } from '../lib/ledgerImport'
+import { decodeBillText, parseDelimitedCsv, parseWechatXlsx } from '../lib/ledgerImport'
 
 interface PendingImage extends CaptureImage {
   previewUrl: string
@@ -85,7 +85,7 @@ export function CaptureBar({ onSubmitted }: { onSubmitted?: () => void }): React
         if (v.kind === 'csv') {
           const reader = new FileReader()
           reader.onload = () => {
-            const parsed = parseDelimitedCsv(String(reader.result))
+            const parsed = parseDelimitedCsv(decodeBillText(reader.result as ArrayBuffer))
             if (parsed.ok && parsed.cells) {
               setBills((prev) => [
                 ...prev,
@@ -96,7 +96,8 @@ export function CaptureBar({ onSubmitted }: { onSubmitted?: () => void }): React
             }
           }
           reader.onerror = () => setProgress(`⚠ 「${f.name}」读取失败，请重试。`)
-          reader.readAsText(f, 'utf-8')
+          // 读字节而非文本：支付宝导出的 CSV 是 GB18030，硬编码 UTF-8 会让中文列名乱码 → 表头判不中
+          reader.readAsArrayBuffer(f)
           continue
         }
         // xlsx

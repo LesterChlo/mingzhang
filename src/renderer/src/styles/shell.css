@@ -2181,3 +2181,35 @@
   font-size: var(--fs-t5);
   color: var(--text-3);
 }
+
+/* 原生滚动条完全隐藏（不占布局宽度）；滚动条本体由 ScrollIndicators 自绘。
+ * 实测：覆盖式开关打包后拿不到（Chromium FeatureList 早期冻结，appendSwitch 无效），
+ * ::-webkit-scrollbar 自定义伪元素又会把覆盖式顶回占位式——故自绘。
+ * 滚动能力不变：只隐藏可见的条，滚轮/键盘/触控板照常。 */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+/* 自绘滚动指示条：滚动时淡入、停下淡出；不接收指针事件 */
+.mz-scroll-indicator {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease-in;
+  background: color-mix(in srgb, var(--text-2) 45%, transparent);
+  border-radius: 3px;
+}
+.mz-scroll-indicator.is-visible {
+  opacity: 1;
+  transition: opacity 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mz-scroll-indicator,
+  .mz-scroll-indicator.is-visible {
+    transition: none;
+  }
+}

@@ -24,7 +24,7 @@
 
 ### 一、安全做在能力面，不做在半吊子沙盒里
 
-嵌进去的 agent 引擎**没有 bash、没有任意文件读写、没有网页访问**——工具面只有 11 条账务动作。
+嵌进去的 agent 引擎**没有 bash、没有任意文件读写、没有网页访问**——工具面只有 16 条账务动作。
 
 危险动作（删除、批量入账）必须由 **UI 按钮**放行：模型自己说"用户已确认"不算数——顺带堵住 prompt injection。
 出网只有你自己配置的模型 API；账本数据不出本机。
@@ -53,7 +53,7 @@
 | 界面 | React 18 + TypeScript 5.7 |
 | Agent 引擎 | pi（`@earendil-works/pi-coding-agent`）作为 SDK 嵌入，工具面收窄到账务动作 |
 | 存储 | 加密 SQLite（better-sqlite3-multiple-ciphers）；密钥走 Electron safeStorage（Windows DPAPI） |
-| 规模 | 约 2.9 万行 TypeScript（其中测试 1.06 万行）：主进程 9.2k / 渲染层 8.3k / 共享 0.5k |
+| 规模 | 约 3.0 万行 TypeScript（其中测试 1.17 万行）：主进程 9.3k / 渲染层 8.8k / 共享 0.6k |
 | 依赖 | 运行时 7 个、开发 11 个（无 UI 组件库、无图表库） |
 
 ## 跑起来
@@ -73,8 +73,8 @@ npm run dev
 
 ```bash
 npm run typecheck   # 类型检查（main + web 双工程，零输出通过）
-npm test            # 348 条单测（vitest，36 个文件）
-npm run ui-test     # 63 条 UI 巡检（Playwright 驱动真实 Electron 窗口）
+npm test            # 359 条单测（vitest，38 个文件）
+npm run ui-test     # 78 条 UI 巡检（Playwright 驱动真实 Electron 窗口）
 npm run dist        # 出包 → release/mingzhang-0.1.0-x64.exe（NSIS）+ .zip（便携）
 ```
 
@@ -90,7 +90,7 @@ UI 巡检跑的是**真窗口、真 IPC**，不是组件快照；数据目录经
 ## 已知限制
 
 - 仅 Windows（NSIS 安装版 + zip 便携版）
-- 版本 0.1.0：日常可用；**报告屏与账户屏仍在实现中**（当前为占位页），数据 schema 与工具面仍可能变
+- 版本 0.1.0：日常可用；**账户屏仍在实现中**（当前为占位页），数据 schema 与工具面仍可能变
 - 安装包未做代码签名，Windows SmartScreen 会提示一次
 - 图片走多模态直读，主模型需支持视觉（无本地 OCR 兜底）
 

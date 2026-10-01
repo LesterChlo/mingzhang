@@ -2268,3 +2268,71 @@ test.describe('面板聊天化与滚动口径（T0928 A/B）', () => {
   })
 })
 
+
+// ---------------------------------------------------------------------------
+// 面板⑩ 账单材料折叠（T1001 §1）：随账单附件拼进用户消息的材料上下文，上屏默认折起来——
+//   折叠态看不到 table_id / read_bill 这类原文，摘要仍在；点开后原文可查（发给模型的内容没变）。
+// ---------------------------------------------------------------------------
+test.describe('助手面板：账单材料折叠（T1001）', () => {
+  test.describe.configure({ timeout: 120_000 })
+
+  test('面板⑩ 材料上下文默认折叠、点开可见', async () => {
+    const { app: tApp, page: tPage } = await launchIsolated({})
+    try {
+      await tPage.evaluate(async () => {
+        const mz = window.mz
+        await mz.setMock(true)
+        for (let i = 0; i < 40; i++) {
+          try {
+            await mz.sendChat('待收尾', [])
+            break
+          } catch {
+            await new Promise((r) => setTimeout(r, 500))
+          }
+        }
+      })
+      await tPage.getByTestId('nav-inbox').click()
+      const capture = tPage.getByLabel('速记行')
+      await capture.press('Escape')
+
+      const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+      await tPage.evaluate(
+        ({ name, type, data }) => {
+          const bin = atob(data)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          const dt = new DataTransfer()
+          dt.items.add(new File([bytes], name, { type }))
+          const el = document.querySelector('[data-testid="capture-bar"]')
+          if (!el) throw new Error('拖拽目标不存在：capture-bar')
+          for (const t of ['dragover', 'drop']) {
+            el.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }))
+          }
+        },
+        { name: '微信账单.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', data: b64 },
+      )
+      await expect(tPage.getByTestId('capture-bill').first(), '账单没解析成速记行 chip').toBeVisible()
+      await capture.fill('把这张账单记一下')
+      await capture.press('Enter')
+
+      await openPanelIsolated(tPage)
+      const material = tPage.getByTestId('panel-msg-material').last()
+      await expect(material, '用户气泡里没有材料块（材料上下文该上屏但折叠）').toBeVisible({ timeout: 30_000 })
+      expect(
+        await material.evaluate((el) => (el as HTMLDetailsElement).open),
+        '材料块默认就该是折叠的',
+      ).toBe(false)
+      await expect(material.locator('summary'), '折叠态下看不到这是什么').toContainText('账单材料')
+      // 折叠不等于丢内容：原文仍在 DOM 里，点开可查（发给模型的还是原来那段）
+      expect(await material.locator('.mz-ap-material-body').textContent()).toContain('table_id=')
+      await material.locator('summary').click()
+      expect(
+        await material.evaluate((el) => (el as HTMLDetailsElement).open),
+        '点摘要没展开',
+      ).toBe(true)
+      await expect(material.locator('.mz-ap-material-body')).toBeVisible()
+    } finally {
+      await tApp.close()
+    }
+  })
+})

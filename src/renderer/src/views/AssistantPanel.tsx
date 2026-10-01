@@ -196,19 +196,40 @@ export function AssistantPanel(): ReactElement {
   )
 }
 
+/** 随账单附件自动拼在用户消息尾部的「材料上下文」（由 inboxStore 拼进消息，正文照发模型不变）。
+ *  上屏时把它折起来：整段 table_id / read_bill 摊在气泡里，看着像调试日志。 */
+const MATERIAL_MARK = /（账单材料 #\d+：/
+
+/** 切成「自己说的话」+「材料上下文」两截；材料块缺省为 null（没有材料的消息原样显示）。 */
+export function splitUserText(text: string): { head: string; material: string | null } {
+  const m = MATERIAL_MARK.exec(text)
+  if (!m) return { head: text, material: null }
+  return { head: text.slice(0, m.index).trim(), material: text.slice(m.index).trim() }
+}
+
 /** 流里的一项。 */
 function PanelRow({ item }: { item: PanelItem }): ReactElement | null {
   switch (item.kind) {
-    case 'user':
+    case 'user': {
       // A 单（聊天化）：用户靠右气泡 + 角色标；pending = 本地乐观入流还没等来回显（淡化表示）
+      const { head, material } = splitUserText(item.text)
       return (
         <div className={`mz-ap-line is-user${item.pending ? ' is-pending' : ''}`} data-testid="panel-msg-user">
           <span className="mz-ap-role" data-testid="panel-msg-role">
             你
           </span>
-          <div className="mz-ap-bubble mz-ap-bubble-user">{item.text}</div>
+          <div className="mz-ap-bubble mz-ap-bubble-user">
+            {head}
+            {material !== null && (
+              <details className="mz-ap-material" data-testid="panel-msg-material">
+                <summary>账单材料（发给模型的上下文 · 点开看原文）</summary>
+                <pre className="mz-ap-material-body">{material}</pre>
+              </details>
+            )}
+          </div>
         </div>
       )
+    }
     case 'assistant':
       // A 单：助手靠左气泡 + 角色标；正文按 Markdown 白名单渲染（T0928 §3）
       return (

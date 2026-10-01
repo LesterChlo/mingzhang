@@ -210,7 +210,12 @@ code {
   max-width: 640px;
   max-height: 100%;
   overflow-y: auto;
-  background: var(--bg-0);
+  /* 背景不能用 var(--bg-0)：tokens.css 把它定义在 .mz-shell 作用域上，而向导是它的兄弟节点
+     （不在壳内）→ 变量失效 → 背景被当成透明（实测 rgba(0,0,0,0)），看着像一层假外框。
+     用 :root 上的主题感知 token --panel（深 #1c1f25 / 浅 #ffffff），与内层卡片同源。 */
+  background: var(--panel);
+  /* 有投影才有“浮起来”的层次，否则像贴在遮罩上 */
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 12px 24px 20px;

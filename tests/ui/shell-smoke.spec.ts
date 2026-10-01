@@ -1885,6 +1885,29 @@ test.describe('模型向导覆盖层（T0928 §1）', () => {
       await fake.close()
     }
   })
+
+  test('向导⑥ 卡片有实底与投影：不是「透明外框」（背景变量作用域失效回归）', async () => {
+    const { app: tApp, page: tPage } = await launchIsolated({})
+    try {
+      await tPage.getByTestId('nav-settings').click()
+      await tPage.getByTestId('settings-route').waitFor()
+      await tPage.getByRole('button', { name: '＋ 新增预设' }).click()
+      await expect(tPage.getByTestId('wizard-card')).toBeVisible({ timeout: 10_000 })
+      const style = await tPage.evaluate(() => {
+        const el = document.querySelector('.wizard-card') as HTMLElement
+        const cs = getComputedStyle(el)
+        return { bg: cs.backgroundColor, shadow: cs.boxShadow, inShell: !!el.closest('.mz-shell') }
+      })
+      const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(style.bg)
+      expect(m, `卡片背景不是实色：${style.bg}`).not.toBeNull()
+      const alpha = m && m[4] !== undefined ? Number(m[4]) : 1
+      expect(alpha, `卡片背景是半透明/透明（${style.bg}）——变量作用域又失效了？`).toBe(1)
+      expect(style.shadow, '卡片没有投影，会显得像贴上去的').not.toBe('none')
+      console.log(`[实测] wizard-card 背景=${style.bg}｜投影=${style.shadow.slice(0, 40)}｜在壳内=${style.inShell}`)
+    } finally {
+      await tApp.close()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -1640,6 +1640,28 @@
   color: var(--text-1);
   border-bottom-left-radius: var(--radius-tag);
 }
+/* 账单材料块：随账单附件拼进用户消息的材料上下文——正文照发模型不变，上屏默认折起来，
+   点开才展开原文（免得面板看着像调试日志）。 */
+.mz-ap-material {
+  margin-top: var(--sp-2);
+  border-top: 1px dashed var(--line);
+  padding-top: var(--sp-1);
+}
+.mz-ap-material > summary {
+  cursor: pointer;
+  font-size: var(--fs-t5);
+  color: var(--text-3);
+}
+.mz-ap-material-body {
+  margin: var(--sp-1) 0 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-t5);
+  color: var(--text-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
 /* T0928 §3：助手回复的 Markdown 白名单渲染（渲染器见 lib/markdown.tsx，React 节点输出、无 HTML 拼接面）。
    只收排印，不改消息条底色：段落/列表/标题的间距压到工作面板的密度。 */
 .mz-md-p {

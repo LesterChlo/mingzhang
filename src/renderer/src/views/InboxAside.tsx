@@ -4,7 +4,8 @@
 //                上月对照走 latestReport()——注意这条通道返回的是**上一个自然月**月报
 //                （src/main/ipc.ts 用 previousMonth()），所以只当"上月"用，绝不冒充本月。
 //   ② 本地数据 → getSettingsInfo() + listSnapshots()（锁标放大版 + 立即快照）
-//   ③ AI 记忆  → 后端无此能力（规格 §6 第 4 条），做禁用占位，**不编造任何数字**
+//   ③ AI 记忆  → 后端无此能力（规格 §6 第 4 条），做禁用占位，**不编造任何数字**；
+//                文案只留用户看得懂的一句——规格条款、接口细节不上屏。
 //
 // 视觉数值全部走 tokens.css 的 var()，不新增自由配色。
 
@@ -150,9 +151,7 @@ export function InboxAside({
       <section className="mz-panel mz-panel-disabled" data-testid="aside-memory">
         <h3 className="mz-panel-title">AI 记忆</h3>
         <div className="mz-panel-empty">待后端支持</div>
-        <div className="mz-panel-hint">
-          记忆条目读取 / 删除接口尚未提供（规格 §6 第 4 条），这里先留位置——不编造「已记住 N 条」。
-        </div>
+        <div className="mz-panel-hint">记忆功能还在开发中，接上再按真数据上屏。</div>
       </section>
     </aside>
   )

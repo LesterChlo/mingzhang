@@ -7,7 +7,7 @@ import { getOrCreateCategoryId, updateFields, confirm as confirmTx, getTransacti
 import { getPending, closePending, GATE_FIELDS } from './pending'
 import { resolveBatchItem } from './batch'
 import { buildCard } from './cards'
-import { createRule, findByCondition } from './rules'
+
 import type { TransactionCardData } from '../../shared/types'
 
 export interface PendingAnswerResult {
@@ -15,26 +15,7 @@ export interface PendingAnswerResult {
   card?: TransactionCardData
 }
 
-/**
- * 待收尾答一次学一次：confirm_record 答案是分类名且交易有商户时，
- * 顺手建一条 merchant contains 规则（provenance=learned_from_correction）。
- * 已有同条件规则则跳过不覆盖；任何失败都不阻塞主流程。
- */
-function learnCategoryRule(db: Database, merchant: string | null, categoryName: string, gateId: number): void {
-  try {
-    const m = (merchant ?? '').trim()
-    const c = (categoryName ?? '').trim()
-    if (!m || !c) return
-    const condition = { match: 'merchant' as const, op: 'contains' as const, value: m }
-    if (findByCondition(db, condition)) return
-    createRule(db, condition, { set_category: c }, {
-      provenance: 'learned_from_correction',
-      reasoning: `待收尾 #${gateId} 答复学得：${m} → ${c}`,
-    })
-  } catch {
-    // 学习失败不阻塞主流程（静默跳过）
-  }
-}
+
 
 /** 就地/对话共用的续办入口。expectedRevision 传入时做乐观校验（防重复作答）。 */
 export function answerPending(
@@ -78,14 +59,7 @@ export function answerPending(
     const closed = closePending(db, row.id, 'resolved', opts.expectedRevision ?? row.revision)
     if (!closed) throw new Error(`待收尾 #${gateId} 已被处理（revision 变更），请刷新后重试`)
     confirmTx(db, tx.id, { reasoning: `用户${opts.via === 'chat' ? '在对话中' : '在待收尾面板'}答复待收尾 #${row.id}` })
-    // 学一次下次自动：答案是分类名（非裸「确认」）时顺手学规则；失败不阻塞
-    if (!isPlainConfirm) {
-      const done = getTransaction(db, tx.id)
-      const catName = done?.category_id != null
-        ? (db.prepare('SELECT name FROM categories WHERE id=?').get(done.category_id) as { name: string } | undefined)?.name ?? null
-        : null
-      if (catName) learnCategoryRule(db, done?.merchant ?? null, catName, row.id)
-    }
+
     const card = buildCard(db, getTransaction(db, tx.id)!)
     return { text: `已按答复处理 #${tx.id}（confirmed）。`, card }
   }

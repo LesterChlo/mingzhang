@@ -123,7 +123,7 @@ test('外壳⑤ 深浅主题切换：token 与 data-theme 同步往返', async (
   // 不硬编码 dark——默认主题是产品决定，不该由用例锁死。
   const initial = await dataTheme()
   expect(['dark', 'light']).toContain(initial)
-  const tokenOf = (t: string) => (t === 'dark' ? '#0e1013' : '#f7f8fa')
+  const tokenOf = (t: string) => (t === 'dark' ? '#191c23' : '#f3f4f7')
   expect(await token()).toBe(tokenOf(initial))
 
   await page.getByTestId('theme-toggle').click()
@@ -1211,8 +1211,10 @@ test.describe('批次结果条（真实数据）', () => {
 
     // 子集说明必须说清「待分类含在已入账里」，否则用户会以为 3+1 是两笔、算不平
     await expect(bar.getByTestId('br-subset-note')).toHaveText('已入账含 1 笔待分类')
-    // 有待分类 → 主按钮在（②B 规格变更 G-03：主按钮改走面板归类）
-    await expect(bar.getByTestId('br-go-handle')).toHaveText('去面板归类 1 笔 →')
+    // UX2 收口：检查是唯一主入口，旧同级入口不渲染；四段账务断言原样保留。
+    await expect(bar.getByTestId('br-go-handle')).toHaveCount(0)
+    await expect(bar.getByTestId('br-go-ledger')).toHaveCount(0)
+    await expect(barPage.getByTestId('open-import-review')).toHaveText('直接复核本批分类')
   })
 
   test('结果条② 折叠组：重复行逐行列出，不计收支组如实说「逐行明细待后端」', async () => {
@@ -1241,20 +1243,20 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(dupRows.locator('.mz-br-row'), '没有重复行却渲染出了明细行').toHaveCount(0)
   })
 
-  test('结果条③ 主按钮开面板并自动发出归类指令（②B 规格变更 G-03）', async () => {
+  test('结果条③ 唯一主入口打开检查页，不自动发模型指令或改账（UX2）', async () => {
     await ensureBatches(1)
     await barPage.getByTestId('nav-inbox').click()
-    const bar = barPage.getByTestId('batch-result-bar')
-    await expect(bar).toBeVisible()
-    await bar.getByTestId('br-go-handle').click()
-
-    // 主按钮的职责从「跳账本」改成「开面板 + 发指令」（次级链接逐笔手动才是跳账本那条）
-    const panel = barPage.getByTestId('assistant-panel')
-    await expect(panel, '主按钮没打开助手面板').toHaveAttribute('aria-hidden', 'false')
-    await expect(panel.getByTestId('panel-msg-user').last(), '没自动发出归类指令').toContainText(
-      '把待分类的账按建议归类',
-    )
-    await expect(barPage.getByTestId('ledger-view'), '主按钮不该再跳账本屏').toHaveCount(0)
+    const before = await barPage.evaluate(() => window.mz.listLedger({}))
+    const userMessages = await barPage.getByTestId('panel-msg-user').count()
+    await expect(barPage.getByTestId('br-go-handle')).toHaveCount(0)
+    await barPage.getByTestId('open-import-review').click()
+    await expect(barPage.getByTestId('import-review-workspace')).toBeVisible()
+    await expect(barPage.getByTestId('save-reviewed-rules')).toHaveCount(0)
+    await expect(barPage.getByTestId('ledger-view')).toHaveCount(0)
+    expect(await barPage.getByTestId('panel-msg-user').count()).toBe(userMessages)
+    expect(await barPage.evaluate(() => window.mz.listLedger({}))).toEqual(before)
+    await barPage.getByLabel('关闭分类复核',{exact:true}).click()
+    await expect(barPage.getByTestId('import-review-workspace')).toHaveCount(0)
   })
 
   test('结果条④ 关闭是内存态：切屏往返仍是关闭态', async () => {
@@ -1645,12 +1647,13 @@ test.describe('助手面板与归类映射表（②B 真实数据）', () => {
     await expect(panelPage.getByTestId('classify-table'), '关面板期间落的门卡没恢复').toBeVisible()
   })
 
-  test('面板⑥ 次级链接「逐笔手动」：跳账本并带上 needs_review 筛选', async () => {
+  test('面板⑥ 旧逐笔入口移除；账本导航和 needs_review 筛选仍可人工核对（UX2）', async () => {
     await ensureBatches(1)
     const bar = panelPage.getByTestId('batch-result-bar')
     await expect(bar).toBeVisible()
-    await expect(bar.getByTestId('br-go-ledger')).toHaveText('逐笔手动')
-    await bar.getByTestId('br-go-ledger').click()
+    await expect(bar.getByTestId('br-go-ledger')).toHaveCount(0)
+    await panelPage.getByTestId('nav-ledger').click()
+    await panelPage.getByTestId('ledger-f-state').selectOption('needs_review')
 
     const ledger = panelPage.getByTestId('ledger-view')
     await expect(ledger, '次级链接没跳到账本屏').toBeVisible()

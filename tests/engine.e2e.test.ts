@@ -292,10 +292,20 @@ describe('引擎端到端（脚本化模型）', () => {
     expect(JSON.parse(readFileSync(join(dataDir, 'pi', 'models.json'), 'utf8')).providers.mocklocal.models[0].id).toBe('mock-model')
   })
 
-  it('M1 教规则 → 再记账命中规则（hit_count + 卡片标注）', async () => {
+  it('M1 teach不写规则；界面显式保存后再记账命中规则', async () => {
     queue({ kind: 'tool', tool: { name: 'teach', args: { action: 'set_category', match_merchant: '星巴克', category_name: '咖啡' } } })
     queue({ kind: 'text', text: '学会了。' })
     await engine.sendChat('以后星巴克都算咖啡', [])
+    expect(db.prepare('SELECT * FROM rules').all()).toHaveLength(0)
+    const { createTransaction, requestReview } = await import('../src/main/domain/ledger')
+    const { prepareClassify, applyClassify } = await import('../src/main/domain/classify')
+    const { saveCategoryRule } = await import('../src/main/domain/category-rules')
+    const tx = createTransaction(db, { amountCents: 100, txType: 'expense', merchant: '星巴克咖啡(太和店)' })
+    requestReview(db, tx, { reason: '合成显式来源' })
+    const gate = prepareClassify(db, { sessionId: 'ui', assignments: [{ groupKey: 'expense::星巴克咖啡(太和店)', categoryName: '咖啡' }] })
+    applyClassify(db, gate.gateId)
+    const categoryId = (db.prepare("SELECT id FROM categories WHERE name='咖啡'").get() as { id: number }).id
+    saveCategoryRule(db, { requestId: 'engine-explicit-save', gateId: gate.gateId, groupKey: 'expense::星巴克咖啡(太和店)', categoryId, expectedRules: [], replaceConflicts: false })
     const rule = db.prepare('SELECT id, hit_count FROM rules').get() as { id: number; hit_count: number }
     expect(rule.hit_count).toBe(0)
 
@@ -303,7 +313,7 @@ describe('引擎端到端（脚本化模型）', () => {
     queue({ kind: 'text', text: '记好了，命中规则。' })
     await engine.sendChat('星巴克 35', [])
     const row = db
-      .prepare('SELECT t.state s, c.name cat FROM transactions t JOIN categories c ON c.id=t.category_id')
+      .prepare('SELECT t.state s, c.name cat FROM transactions t JOIN categories c ON c.id=t.category_id ORDER BY t.id DESC LIMIT 1')
       .get() as { s: string; cat: string }
     expect(row.s).toBe('confirmed')
     expect(row.cat).toBe('咖啡') // 规则自动落的分类（预置分类里没有"咖啡"）

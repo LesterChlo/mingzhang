@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CategoryRulesManager } from '../views/CategoryRulesManager'
 import type {
   AppConfigDTO,
   ChatMessageDTO,
@@ -63,6 +64,7 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
   const [pass2, setPass2] = useState('')
   const [busy, setBusy] = useState(false)
   // 第 7 单 段3：设置页分 3 个子分类（只归组，不删改任何 section 功能）；默认「模型服务」。
+  const [rulesOpen, setRulesOpen] = useState(false)
   const [tab, setTab] = useState<'model' | 'billing' | 'storage'>('model')
 
   function reloadInfo(): void {
@@ -85,10 +87,12 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
       })
   }
 
+  if (rulesOpen) return <CategoryRulesManager returnLabel="返回设置" onClose={() => setRulesOpen(false)} />
   return (
     <div className="settings">
       <div className="settings-bar">
         <h2>设置</h2>
+        <button onClick={() => setRulesOpen(true)} data-testid="settings-category-rules">分类习惯</button>
         <span className="grow" />
         <button className="primary" onClick={onDone}>
           返回收件箱

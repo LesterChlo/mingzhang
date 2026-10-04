@@ -21,15 +21,11 @@ import { money } from '../lib/shellFormat'
 
 export interface BatchResultBarProps {
   summary: BatchResultSummaryDTO
-  /** 次级链接「逐笔手动」：带上 needs_review 筛选跳账本（筛选条件由调用方组装）。 */
-  onGoLedger: () => void
-  /** ②B G-03 主按钮：开面板并自动发出归类指令（走模型，不是跳账本）。 */
-  onGoHandle: () => void
   /** ✕ 关闭：本单仅内存态（持久化 = D-04）。 */
   onDismiss: () => void
 }
 
-export function BatchResultBar({ summary, onGoLedger, onGoHandle, onDismiss }: BatchResultBarProps): ReactElement {
+export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): ReactElement {
   const [dupOpen, setDupOpen] = useState(false)
   const [exOpen, setExOpen] = useState(false)
   const { booked, needsCategory, excluded, duplicates } = summary.counts
@@ -55,26 +51,10 @@ export function BatchResultBar({ summary, onGoLedger, onGoHandle, onDismiss }: B
             ⧉ {duplicates} 重复跳过
           </span>
         </div>
-        {/* 主按钮与 ✕ 同属一个操作簇：分开排会被 584px 的收件箱列挤到下一行、
-            ✕ 单独吊在左边像"删这一条"。成簇则要么都在右上行、要么整簇换行仍靠右。
-            ②B G-03：主按钮走模型（开面板发指令），次级链接「逐笔手动」走人手动（跳账本） */}
+        {/* UX2 收口：归类入口只剩「检查分类」那一个（收件箱卡片里），
+            结果条不再并列「去面板归类 / 逐笔手动」两个入口——三处入口互相打架是上一版的病根。
+            这里只留摘要 + ✕。 */}
         <div className="mz-br-actions">
-          {/* 待分类清零 → 整条退化为摘要行，不留一个点了没用的按钮 */}
-          {needsCategory > 0 && (
-            <>
-              <button
-                type="button"
-                className="mz-btn mz-btn-primary"
-                data-testid="br-go-handle"
-                onClick={onGoHandle}
-              >
-                去面板归类 {needsCategory} 笔 →
-              </button>
-              <button type="button" className="mz-br-link" data-testid="br-go-ledger" onClick={onGoLedger}>
-                逐笔手动
-              </button>
-            </>
-          )}
           <button
             type="button"
             className="mz-br-x"

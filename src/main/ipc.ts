@@ -23,7 +23,9 @@ import {
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
 import { listMonthSummaries } from './domain/reports'
-import { applyClassify, buildClassifyProposal, undoClassify } from './domain/classify'
+import { applyClassify, buildClassifyProposal, getClassifyResults, prepareClassify, undoClassify, validateBatchId } from './domain/classify'
+import { listCategoryRules, saveCategoryRule, updateCategoryRule, deactivateCategoryRule } from './domain/category-rules'
+import type { SaveCategoryRuleInput, UpdateCategoryRuleInput, DeactivateCategoryRuleInput } from '../shared/types'
 import type {
   BatchResultSummaryDTO,
   ClassifyAssignmentInput,
@@ -369,18 +371,40 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
 
   // D-01 批量归类：只读建议 / 执行 / 整体撤销。执行入口 = 界面确认按钮（工具侧只能落方案）。
   ipcMain.handle('mz:getClassifyProposal', (_e, batchId?: string) => {
+    validateBatchId(batchId)
     const db = ctx.getDb()
-    if (!db) return { generatedAt: new Date().toISOString(), batchId: batchId ?? null, pendingCount: 0, groups: [] }
+    if (!db) throw new Error('账本未就绪')
     return buildClassifyProposal(db, { batchId: batchId ?? null })
   })
 
+  const requireDb = (): Database => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return db
+  }
+  ipcMain.handle('mz:prepareClassify', (_e, input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion?: string }) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('归类参数无效')
+    if (typeof input.expectedProposalVersion !== 'string' || !input.expectedProposalVersion) throw new Error('归类建议版本缺失，请重新读取并复核')
+    return prepareClassify(requireDb(), { assignments: input.assignments, batchId: input.batchId, expectedProposalVersion: input.expectedProposalVersion, sessionId: 'ui-import-review' })
+  })
+  ipcMain.handle('mz:getClassifyResults', (_e, batchId?: string) => {
+    validateBatchId(batchId)
+    return getClassifyResults(requireDb(), batchId)
+  })
+  ipcMain.handle('mz:listCategoryRules', () => listCategoryRules(requireDb()))
+  ipcMain.handle('mz:saveCategoryRule', (_e, input: SaveCategoryRuleInput) => saveCategoryRule(requireDb(), input))
+  ipcMain.handle('mz:updateCategoryRule', (_e, input: UpdateCategoryRuleInput) => updateCategoryRule(requireDb(), input))
+  ipcMain.handle('mz:deactivateCategoryRule', (_e, input: DeactivateCategoryRuleInput) => deactivateCategoryRule(requireDb(), input))
+
   ipcMain.handle('mz:applyClassify', (_e, gateId: number, rows?: ClassifyAssignmentInput[]) => {
+    if (!Number.isSafeInteger(gateId) || gateId <= 0) throw new Error('确认门参数无效')
     const db = ctx.getDb()
     if (!db) return null
     return applyClassify(db, gateId, rows)
   })
 
   ipcMain.handle('mz:undoClassify', (_e, classifyId: string) => {
+    if (typeof classifyId !== 'string' || !classifyId.startsWith('cls-') || classifyId.length > 300) throw new Error('撤销参数无效')
     const db = ctx.getDb()
     if (!db) throw new Error('账本未就绪')
     return undoClassify(db, classifyId)

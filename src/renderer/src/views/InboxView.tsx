@@ -12,6 +12,8 @@ import { localDay, localMonth, money, relTime } from '../lib/shellFormat'
 import { QueueCard } from './QueueCard'
 import { InboxAside, type MonthAgg } from './InboxAside'
 import { BatchResultBar } from './BatchResultBar'
+import { CategoryRulesManager } from './CategoryRulesManager'
+import { ImportReviewController } from './ImportReviewController'
 
 /** 本月口径下的「今天已记」：只取今天这一天的已确认账目。 */
 interface TodaySummary {
@@ -20,17 +22,7 @@ interface TodaySummary {
   rows: { text: string; cents: number }[]
 }
 
-export function InboxView({
-  onGoReport,
-  onGoLedger,
-  onGoHandle,
-}: {
-  onGoReport?: () => void
-  /** 结果条次级链接：带 needs_review 筛选跳账本（筛选条件由 AppShell 组装）。 */
-  onGoLedger?: () => void
-  /** 结果条主按钮：开面板并自动发出归类指令（②B G-03）。 */
-  onGoHandle?: () => void
-}): ReactElement {
+export function InboxView({ onGoReport }: { onGoReport?: () => void }): ReactElement {
   const {
     items,
     pendingCount,
@@ -43,6 +35,8 @@ export function InboxView({
     batchResult,
     dismissBatchResult,
   } = useInbox()
+  const [rulesOpen, setRulesOpen] = useState(false)
+  const [reviewBatchId, setReviewBatchId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [agg, setAgg] = useState<MonthAgg | null>(null)
   const [lastReport, setLastReport] = useState<ReportCardData | null>(null)
@@ -93,17 +87,17 @@ export function InboxView({
   const showSkeleton = loading && items.length === 0
   const showEmpty = !loading && !error && items.length === 0 && !inflight
 
+  if (rulesOpen) return <CategoryRulesManager onClose={() => setRulesOpen(false)} />
+  if (reviewBatchId) return <ImportReviewController batchId={reviewBatchId} onClose={() => setReviewBatchId(null)} onApplied={async () => { await refresh(); await refreshBatchResult() }} />
+
   return (
     <div className="mz-inbox" data-testid="inbox-view">
       <section className="mz-queue">
+
         {/* K3 G 组事实条：批次入账后驻留在队列之上，把「刚才那批发生了什么」说清楚 */}
+        {batchResult && <button type="button" className="mz-btn mz-btn-primary" data-testid="open-import-review" onClick={() => setReviewBatchId(batchResult.batchId)}>直接复核本批分类</button>}
         {batchResult && (
-          <BatchResultBar
-            summary={batchResult}
-            onGoLedger={() => onGoLedger?.()}
-            onGoHandle={() => onGoHandle?.()}
-            onDismiss={dismissBatchResult}
-          />
+          <BatchResultBar summary={batchResult} onDismiss={dismissBatchResult} />
         )}
 
         {error && (

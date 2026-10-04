@@ -194,10 +194,15 @@ export interface ClassifyGroupDTO {
   totalCents: number
   suggestedCategory: string | null
   suggestionSource: 'rule' | 'builtin' | null
+  details: { txId: number; occurredAt: string | null; amountCents: number; merchant: string | null; description: string | null }[]
+  ruleStatus: 'none' | 'matched' | 'conflict' | 'invalid'
+  ruleIds: number[]
 }
 
 /** 只读建议：现在有哪些待分类、怎么分组、建议给什么分类。 */
 export interface ClassifyProposalDTO {
+  /** Opaque main-process token for the full batch-scoped proposal (not selected rows). */
+  proposalVersion: string
   generatedAt: string
   batchId: string | null
   pendingCount: number
@@ -230,6 +235,16 @@ export interface ClassifyPlanCardData {
 export interface ClassifyAssignmentInput {
   groupKey: string
   categoryName: string
+  txIds?: number[]
+  categoryId?: number
+}
+
+export interface ClassifyPrepareResultDTO {
+  gateId: number
+  classifyId: string
+  plan: { groups: ClassifyPlanGroupDTO[] }
+  selectedCount: number
+  remainingCount: number
 }
 
 export interface ClassifyResultDTO {
@@ -237,8 +252,68 @@ export interface ClassifyResultDTO {
   classifyId: string
   batchId: string | null
   appliedCount: number
+  selectedCount: number
+  remainingCount: number
   appliedGroups: { merchant: string | null; categoryName: string; count: number }[]
   skipped: { txId: number; reason: string }[]
+}
+
+export interface ClassifyRecoveryCandidateDTO {
+  groupKey: string
+  merchant: string
+  txType: 'expense' | 'income'
+  categoryId: number
+  categoryName: string
+  txIds: number[]
+  count: number
+}
+export interface ClassifyRecoveryResultDTO {
+  gateId: number
+  classifyId: string
+  batchId: string | null
+  appliedCount: number
+  candidates: ClassifyRecoveryCandidateDTO[]
+  undo: {
+    status: 'available' | 'partial' | 'reverted' | 'unavailable'
+    revertibleCount: number
+    revertedCount: number
+    skipped: { txId: number; reason: string }[]
+  }
+}
+
+export interface RuleVersionDTO { id: number; version: string }
+export interface CategoryRuleDTO {
+  id: number
+  version: string
+  merchant: string | null
+  op: 'equals' | 'contains' | null
+  direction: 'expense' | 'income' | null
+  categoryId: number | null
+  categoryName: string | null
+  active: boolean
+  valid: boolean
+  hitCount: number
+}
+export interface SaveCategoryRuleInput {
+  requestId: string
+  gateId: number
+  groupKey: string
+  categoryId: number
+  expectedRules: RuleVersionDTO[]
+  replaceConflicts: boolean
+}
+export interface UpdateCategoryRuleInput {
+  ruleId: number
+  expectedVersion: string
+  categoryId: number
+  expectedRules: RuleVersionDTO[]
+  replaceConflicts: boolean
+}
+export interface DeactivateCategoryRuleInput { ruleId: number; expectedVersion: string }
+export interface CategoryRuleSaveResultDTO {
+  status: 'saved' | 'reused' | 'conflict'
+  rule: CategoryRuleDTO | null
+  conflicts: CategoryRuleDTO[]
 }
 
 export interface ClassifyUndoResultDTO {
@@ -523,7 +598,13 @@ export interface MingZhangApi {
   /** D-03a：按批次读回执行结果。传 gateId 取指定批次；不传取最近一次已执行的批次。都没执行过 → null。 */
   getBatchResult: (gateId?: number) => Promise<BatchResultSummaryDTO | null>
   /** D-01：只读归类建议（纯查库，不写任何一行）。 */
+  getClassifyResults: (batchId?: string) => Promise<ClassifyRecoveryResultDTO[]>
   getClassifyProposal: (batchId?: string) => Promise<ClassifyProposalDTO>
+  prepareClassify: (input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion: string }) => Promise<ClassifyPrepareResultDTO>
+  listCategoryRules: () => Promise<CategoryRuleDTO[]>
+  saveCategoryRule: (input: SaveCategoryRuleInput) => Promise<CategoryRuleSaveResultDTO>
+  updateCategoryRule: (input: UpdateCategoryRuleInput) => Promise<CategoryRuleSaveResultDTO>
+  deactivateCategoryRule: (input: DeactivateCategoryRuleInput) => Promise<CategoryRuleDTO>
   /** D-01：执行归类方案（rows = ②B 面板改选后的最终映射；缺省用方案里的）。 */
   applyClassify: (gateId: number, rows?: ClassifyAssignmentInput[]) => Promise<ClassifyResultDTO | null>
   /** D-01：整体撤销一次批量归类（按 classifyId 定位，只回退没被后续改过的笔）。 */

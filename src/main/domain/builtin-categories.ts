@@ -10,7 +10,7 @@
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import { getOrCreateCategoryId } from './ledger'
-import { applyRules } from './rules'
+import { applyRules, resolveRuleMatch } from './rules'
 
 /** 商户关键词（含即命中，大小写不敏感）→ 分类名。 */
 const BUILTIN: { keys: string[]; category: string }[] = [
@@ -62,6 +62,8 @@ export function classifyByMerchant(
 ): MerchantClassification {
   const empty: MerchantClassification = { categoryId: null, ruleHit: null, builtinName: null }
   if (input.kind !== 'expense' && input.kind !== 'income') return empty
+  const resolution = resolveRuleMatch(db, input.merchant, input.kind)
+  if (resolution.status === 'conflict' || resolution.status === 'invalid') return empty
   const hit = applyRules(db, {
     merchant: input.merchant,
     kind: input.kind,

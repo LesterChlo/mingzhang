@@ -84,7 +84,7 @@ export function AssistantPanel(): ReactElement {
       <div className="mz-ap-stream" data-testid="panel-stream" ref={streamRef} onScroll={onStreamScroll}>
         {items.length === 0 ? (
           <p className="mz-ap-hint">
-            问一句，或者点结果条上的「去面板归类」——它会先列出待分类的账，再让你在下面那张表里逐组确认。
+            可以问账目，也可以让助手准备操作方案；需要确认的操作会留在收件箱。
           </p>
         ) : (
           items.map((it) => <PanelRow key={it.id} item={it} />)
@@ -249,7 +249,7 @@ function PanelRow({ item }: { item: PanelItem }): ReactElement | null {
           <span className="mz-ap-tool-status">
             {item.status === 'running' ? '运行中…' : item.status === 'error' ? '失败' : '完成'}
           </span>
-          {item.summary ? <span className="mz-ap-tool-sum">{item.summary}</span> : null}
+          {item.status === 'error' ? <div><span className="mz-ap-tool-sum">这次尝试未成功，请以本轮最终结果为准。</span><details><summary>查看错误详情</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.summary || '没有返回错误详情'}</pre></details></div> : item.summary ? <span className="mz-ap-tool-sum">{item.summary}</span> : null}
         </div>
       )
     case 'thinking':

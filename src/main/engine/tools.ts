@@ -26,7 +26,7 @@ import { aggregate, PERIODS, type Period } from '../domain/queries'
 import { createPending } from '../domain/pending'
 import { prepareDeleteGate } from '../domain/gates'
 
-import { classifyByMerchant, BUILTIN_CONFIDENCE } from '../domain/builtin-categories'
+import { classifyByMerchant } from '../domain/builtin-categories'
 import { createM2Tools } from './tools-m2'
 import { createM3Tools } from './tools-m3'
 import { createM4Tools } from './tools-m4'
@@ -78,7 +78,8 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
     label: '记账',
     description:
       '记一笔账。用户表达任何记账意图时调用（自然语言或截图解析结果）。金额用整数分（35元=3500）且恒正；' +
-      '分类拿不准就省略 category_name（系统会自动套用用户教过的规则，或转待确认）；' +
+      '所有单笔都保存为待确认，只有用户在界面点击确认入账才正式入账，不要宣称已入账；' +
+      '分类拿不准就省略 category_name（系统会套用用户规则或常识提供建议，仍需用户确认）；' +
       '转账类资金流转用 tx_type=transfer，目标账户不明传 null。',
     parameters: Type.Object({
       amount_cents: Type.Integer({ description: '金额，整数分，恒正。35 元 = 3500' }),
@@ -175,8 +176,7 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
         reasoning: params.note ?? null,
       })
 
-      // 直通判定（§5.5）：阈值达标 + 分类已定（支出/收入）+ 转账目标已定
-      // 常识兜底：命中常识表时，低置信度不再拦路（流畅优先，错了去账本改）
+      // 单笔一律先确认；分类/置信度只提供建议和核对原因，不能代替用户确认。
       const threshold = getThreshold(db)
       const categoryMissing = (txType === 'expense' || txType === 'income') && categoryId === null
       const transferTargetMissing = txType === 'transfer' && toAccountId === null
@@ -185,39 +185,25 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
       else if (categoryMissing) reviewReason = '分类未定'
       else if (transferTargetMissing) reviewReason = '转账目标账户未定'
       else if (ctx.visionUnverified) reviewReason = '图片来源未经视觉自检（软拦：结果进待确认）'
+      else reviewReason = '单笔记账需要用户确认'
 
-      let card: TransactionCardData
-      let text: string
-      if (reviewReason) {
-        requestReview(db, txId, {
-          reason: reviewReason,
-          sourceMessageId: ctx.sourceMessageId,
-          confidenceScore: params.confidence,
-        })
-        const gateId = createPending(db, {
-          txId,
-          sessionId: ctx.sessionId,
-          field: 'confirm_record',
-          question: reviewReason,
-          payload: { txId, reason: reviewReason },
-        })
-        card = buildCard(db, txOf(db, txId), { reviewReason, gateId, ruleHit })
-        text = `已保存待确认（交易 #${txId}，原因：${reviewReason}）。请用户在界面上点「确认入账」。`
-      } else {
-        autoConfirm(db, txId, {
-          confidenceScore: builtinName !== null ? BUILTIN_CONFIDENCE : params.confidence,
-          sourceMessageId: ctx.sourceMessageId,
-          reasoning: builtinName !== null ? `常识分类「${builtinName}」（错了去账本改）` : undefined,
-        })
-        card = buildCard(db, txOf(db, txId), { ruleHit })
-        text =
-          `已入账：交易 #${txId}，¥${yuan(params.amount_cents)}` +
-          `${params.merchant ? ` · ${params.merchant}` : ''}` +
-          `${card.tx.categoryName ? ` · ${card.tx.categoryName}` : ''}（confirmed）` +
-          (categoryCreated && card.tx.categoryName ? `（新建分类「${card.tx.categoryName}」）` : '') +
-          (ruleHit ? `（命中规则 #${ruleHit.ruleId}）` : '') +
-          (builtinName !== null ? `（常识分类「${builtinName}」）` : '')
-      }
+      requestReview(db, txId, {
+        reason: reviewReason,
+        sourceMessageId: ctx.sourceMessageId,
+        confidenceScore: params.confidence,
+      })
+      const gateId = createPending(db, {
+        txId,
+        sessionId: ctx.sessionId,
+        field: 'confirm_record',
+        question: reviewReason,
+        payload: { txId, reason: reviewReason, requiresExplicitConfirm: true },
+      })
+      const card = buildCard(db, txOf(db, txId), { reviewReason, gateId, ruleHit })
+      let text = `已保存待确认（交易 #${txId}，原因：${reviewReason}）。请用户在界面上点「确认入账」。` +
+        (categoryCreated && card.tx.categoryName ? `（新建分类「${card.tx.categoryName}」）` : '') +
+        (ruleHit ? `（命中规则 #${ruleHit.ruleId}）` : '') +
+        (builtinName !== null ? `（常识分类「${builtinName}」）` : '')
 
       // 账户没匹配上：点名说出来（模型会照着转述给用户），不静默（缺陷③）
       if (accountMissNote) text += ` ⚠ ${accountMissNote}`

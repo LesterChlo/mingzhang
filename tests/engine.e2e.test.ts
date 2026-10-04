@@ -195,7 +195,7 @@ describe('引擎端到端（脚本化模型）', () => {
     expect(names).not.toContain('grep')
   })
 
-  it('「星巴克 35」→ record 落库 → confirmed 卡片', async () => {
+  it('「星巴克 35」→ record 落库 → needs_review 确认门卡片', async () => {
     queue({ kind: 'tool', tool: { name: 'record', args: { amount_cents: 3500, tx_type: 'expense', merchant: '星巴克', category_name: '餐饮', confidence: 0.95 } } })
     queue({ kind: 'text', text: '记好了：¥35.00 · 星巴克 · 餐饮。' })
 
@@ -206,7 +206,7 @@ describe('引擎端到端（脚本化模型）', () => {
         ' JOIN categories c ON c.id=t.category_id JOIN accounts a ON a.id=t.account_id')
       .get() as { c: number; s: string; m: string; cat: string; acc: string }
     expect(row.c).toBe(3500)
-    expect(row.s).toBe('confirmed')
+    expect(row.s).toBe('needs_review')
     expect(row.m).toBe('星巴克')
     expect(row.cat).toBe('餐饮')
     expect(row.acc).toBe('现金') // 默认账户回落
@@ -215,7 +215,7 @@ describe('引擎端到端（脚本化模型）', () => {
     const chain = (
       db.prepare("SELECT change_type c FROM audit_log WHERE entity_type='transaction' ORDER BY id").all() as { c: string }[]
     ).map((r) => r.c)
-    expect(chain).toEqual(['create', 'parse', 'auto_confirm'])
+    expect(chain).toEqual(['create', 'parse', 'request_review'])
 
     // imports + agent_runs 落库
     expect((db.prepare("SELECT COUNT(*) n FROM imports WHERE source_type='text'").get() as { n: number }).n).toBe(1)
@@ -225,7 +225,7 @@ describe('引擎端到端（脚本化模型）', () => {
 
     // 事件里有卡片
     const toolEnd = events.find((e) => e.type === 'tool-end') as { payload: { details: { card: { tx: { state: string; amountCents: number } } } } } | undefined
-    expect(toolEnd?.payload.details.card.tx.state).toBe('confirmed')
+    expect(toolEnd?.payload.details.card.tx.state).toBe('needs_review')
     expect(toolEnd?.payload.details.card.tx.amountCents).toBe(3500)
   })
 
@@ -234,6 +234,9 @@ describe('引擎端到端（脚本化模型）', () => {
     queue({ kind: 'tool', tool: { name: 'record', args: { amount_cents: 3500, tx_type: 'expense', merchant: '星巴克', category_name: '餐饮', confidence: 0.95 } } })
     queue({ kind: 'text', text: 'ok' })
     await engine.sendChat('星巴克 35', [])
+    // 查询用例仍验证已确认账的原金额：显式点击既有确认入口。
+    queue({ kind: 'text', text: '已确认入账。' })
+    expect((await engine.confirmRecord(1)).status).toBe('ok')
 
     queue({ kind: 'tool', tool: { name: 'query', args: { metric: 'total_expense', period: 'this_month', category_name: '餐饮' } } })
     queue({ kind: 'text', text: '这个月餐饮花了 35 元。' })
@@ -280,7 +283,7 @@ describe('引擎端到端（脚本化模型）', () => {
     expect(JSON.stringify(withImage)).toContain('data:image/png;base64')
 
     expect((db.prepare("SELECT COUNT(*) n FROM imports WHERE source_type='screenshot'").get() as { n: number }).n).toBe(1)
-    expect((db.prepare('SELECT state s FROM transactions').get() as { s: string }).s).toBe('confirmed')
+    expect((db.prepare('SELECT state s FROM transactions').get() as { s: string }).s).toBe('needs_review')
   })
 
   it('会话落自定义目录 + 模型清单落 pi/（~/.pi 零接触由 app 层测试另证）', async () => {
@@ -315,7 +318,7 @@ describe('引擎端到端（脚本化模型）', () => {
     const row = db
       .prepare('SELECT t.state s, c.name cat FROM transactions t JOIN categories c ON c.id=t.category_id ORDER BY t.id DESC LIMIT 1')
       .get() as { s: string; cat: string }
-    expect(row.s).toBe('confirmed')
+    expect(row.s).toBe('needs_review')
     expect(row.cat).toBe('咖啡') // 规则自动落的分类（预置分类里没有"咖啡"）
     expect((db.prepare('SELECT hit_count FROM rules WHERE id=?').get(rule.id) as { hit_count: number }).hit_count).toBe(1)
     const toolEnd = events.filter((e) => e.type === 'tool-end').at(-1) as { payload: { details: { card: { ruleHit: { ruleId: number } | null } } } }
@@ -332,6 +335,8 @@ describe('引擎端到端（脚本化模型）', () => {
     queue({ kind: 'tool', tool: { name: 'record', args: { amount_cents: 5000, tx_type: 'expense', merchant: '书店', category_name: '购物', confidence: 0.9 } } })
     queue({ kind: 'text', text: 'ok' })
     await engine.sendChat('书店 50', [])
+    queue({ kind: 'text', text: '已确认入账。' })
+    expect((await engine.confirmRecord(1)).status).toBe('ok')
 
     // 模型调 delete：只生成 gate，不执行
     queue({ kind: 'tool', tool: { name: 'delete', args: { tx_id: 1 } } })
@@ -469,7 +474,7 @@ describe('引擎端到端（脚本化模型）', () => {
     expect(r3).toBeNull()
   })
 
-  it('M2 pending answer：分类答复入账；对删除 gate 拒绝作答', async () => {
+  it('M2 pending answer：新单笔补答不能入账；对删除 gate 拒绝作答', async () => {
     // 低置信度 → confirm_record
     queue({ kind: 'tool', tool: { name: 'record', args: { amount_cents: 4200, tx_type: 'expense', merchant: '无名小店', confidence: 0.5 } } })
     queue({ kind: 'text', text: '分类没把握。' })
@@ -478,8 +483,14 @@ describe('引擎端到端（脚本化模型）', () => {
       .prepare("SELECT id, tx_id FROM pending_clarifications WHERE field='confirm_record'")
       .get() as { id: number; tx_id: number }
     queue({ kind: 'tool', tool: { name: 'pending', args: { action: 'answer', gate_id: pend.id, answer: '餐饮' } } })
-    queue({ kind: 'text', text: '已入账。' })
+    queue({ kind: 'text', text: '请在界面选择分类后确认。' })
     await engine.sendChat('是餐饮', [])
+    const answerEnd = events.filter((e) => e.type === 'tool-end').at(-1) as { payload: { isError: boolean } }
+    expect(answerEnd.payload.isError).toBe(true)
+    expect((db.prepare('SELECT state FROM transactions WHERE id=?').get(pend.tx_id) as { state: string }).state).toBe('needs_review')
+    expect((db.prepare('SELECT status FROM pending_clarifications WHERE id=?').get(pend.id) as { status: string }).status).toBe('open')
+    queue({ kind: 'text', text: '已确认入账。' })
+    expect((await engine.confirmRecord(pend.tx_id, '餐饮')).status).toBe('ok')
     const row = db
       .prepare('SELECT t.state s, c.name cat FROM transactions t JOIN categories c ON c.id=t.category_id WHERE t.id=?')
       .get(pend.tx_id) as { s: string; cat: string }

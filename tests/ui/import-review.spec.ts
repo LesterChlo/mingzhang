@@ -110,6 +110,7 @@ test('真实批次 → 展开逐笔排除 → 分类确认 → 独立规则保�
   try {
     const { page } = f
     const { summary, proposal } = await importBill(page)
+    await expect(page.locator('.mz-review-heading p')).toHaveText('先勾选要处理的商户，再为它选择分类，最后确认所选记录。只修改分类，不会重复记账。')
     const group = proposal.groups.find(g => g.merchant === merchant)!
     await select(page)
     const block = page.locator('.mz-review-row').filter({ hasText: merchant }).locator('..')

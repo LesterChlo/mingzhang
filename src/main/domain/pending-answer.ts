@@ -26,6 +26,10 @@ export function answerPending(
 ): PendingAnswerResult {
   const row = getPending(db, gateId)
   if (!row || row.status !== 'open') throw new Error(`待收尾 #${gateId} 不存在或已关闭`)
+  // 只收紧新建单笔 record；批次/历史 confirm_record 的补答契约保持不变。
+  if (row.field === 'confirm_record' && JSON.parse(row.payload).requiresExplicitConfirm === true) {
+    throw new Error('单笔记账确认门只能由用户在界面上点「确认入账」按钮完成，不能通过补答入账。')
+  }
   if (GATE_FIELDS.has(row.field)) {
     throw new Error(
       `#${gateId} 是${

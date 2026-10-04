@@ -136,20 +136,32 @@ describe('mock 全链路（真引擎 + 内置假模型，离线）', () => {
       .prepare('SELECT t.amount_cents c, t.state s, t.merchant m, c.name cat FROM transactions t JOIN categories c ON c.id=t.category_id')
       .get() as { c: number; s: string; m: string; cat: string }
     expect(row.c).toBe(2600)
-    expect(row.s).toBe('confirmed')
+    expect(row.s).toBe('needs_review')
     expect(row.m).toBe('麦当劳')
     expect(row.cat).toBe('餐饮')
     expect(row.cat).not.toBe('其他')
   })
 
-  it('「星巴克 35」离线跑通：record 落库 confirmed', async () => {
+  it('「星巴克 35」离线跑通：先待确认，点击确认幂等且统计只计一次', async () => {
     await engine.sendChat('星巴克 35', [])
     const row = db
       .prepare('SELECT amount_cents c, state s, merchant m FROM transactions')
       .get() as { c: number; s: string; m: string }
     expect(row.c).toBe(3500)
-    expect(row.s).toBe('confirmed')
+    expect(row.s).toBe('needs_review')
     expect(row.m).toBe('星巴克')
+    // 未点确认时统计为零；mock 不会自动调用确认入口。
+    const { aggregate } = await import('../src/main/domain/queries')
+    expect(aggregate(db, { metric: 'total_expense', period: 'this_month' }).totalCents).toBe(0)
+    const gate = db.prepare("SELECT id, status FROM pending_clarifications WHERE field='confirm_record'").get() as { id: number; status: string }
+    expect(gate.status).toBe('open')
+    const tx = db.prepare('SELECT id FROM transactions').get() as { id: number }
+    expect((await engine.confirmRecord(tx.id)).status).toBe('ok')
+    expect((await engine.confirmRecord(tx.id)).status).toBe('already_closed')
+    expect((db.prepare('SELECT status FROM pending_clarifications WHERE id=?').get(gate.id) as { status: string }).status).toBe('resolved')
+    expect(aggregate(db, { metric: 'total_expense', period: 'this_month' })).toMatchObject({ totalCents: 3500, count: 1 })
+    expect(db.prepare("SELECT * FROM audit_log WHERE change_type='confirm'").all()).toHaveLength(1)
+    expect(db.prepare("SELECT * FROM audit_log WHERE change_type='auto_confirm'").all()).toHaveLength(0)
     // 第二轮：查询（mock 走 query 工具）
     await engine.sendChat('这个月花了多少', [])
     const q = events.filter((e) => e.type === 'tool-end').map((e) => (e.payload as { toolName?: string }).toolName)
@@ -157,13 +169,13 @@ describe('mock 全链路（真引擎 + 内置假模型，离线）', () => {
     expect((db.prepare('SELECT COUNT(*) n FROM transactions').get() as { n: number }).n).toBe(1)
   })
 
-  it('② e) mock 放开附件通道：带图对话照常入账（脚本化确定性解析，不软拦）', async () => {
+  it('② e) mock 放开附件通道：带图可解析但仍需显式确认', async () => {
     const { makeSolidColorPngBase64 } = await import('../src/main/wizard/png')
     const png = makeSolidColorPngBase64(8, 8, [10, 200, 10])
     await engine.sendChat('瑞幸 12', [{ fileName: 'pay.png', dataBase64: png, mediaType: 'image/png' }])
     console.log('EVENTS:', JSON.stringify(events.map((e) => ({ t: e.type, p: e.payload?.isError, msg: String(e.payload?.message ?? e.payload?.text ?? '').slice(0, 120) }))))
     const row = db.prepare('SELECT state s, merchant m FROM transactions').get() as { s: string; m: string }
-    expect(row.s).toBe('confirmed') // mock 不软拦：图片附件照常走确定性解析入账
+    expect(row.s).toBe('needs_review') // mock 只免视觉软拦，不豁免单笔确认门
     expect(row.m).toBe('瑞幸')
   })
 

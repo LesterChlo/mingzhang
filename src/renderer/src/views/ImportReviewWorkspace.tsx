@@ -40,7 +40,7 @@ export function ImportReviewWorkspace({ groups, categories, busy, error, onConfi
     onConfirm(chosen.map(g => ({ key: g.key, category: category(g), txIds: ids(g) })))
   }
   return <section className="mz-review" data-testid="import-review-workspace" aria-label="本批分类复核">
-    <header className="mz-review-heading"><div><h2>检查分类</h2><p>这些账已导入。检查建议后确认分类，不会重复记账或自动保存习惯。</p></div><button type="button" disabled={busy} onClick={onClose} aria-label="关闭分类复核">关闭</button></header>
+    <header className="mz-review-heading"><div><h2>检查分类</h2><p>先勾选要处理的商户，再为它选择分类，最后确认所选记录。只修改分类，不会重复记账。</p></div><button type="button" disabled={busy} onClick={onClose} aria-label="关闭分类复核">关闭</button></header>
     <div className="mz-review-layout"><div className="mz-review-list">
       <div className="mz-review-toolbar"><span>{groups.length} 组商户</span><input aria-label="搜索待分类商户" placeholder="搜索商户" value={query} onChange={e => setQuery(e.target.value)} /></div>
       {visible.length === 0 && <p className="mz-review-empty">{groups.length ? '没有匹配的商户' : '本批没有待分类记录'}</p>}

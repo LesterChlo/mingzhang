@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { makeWechatXlsxBuffer } from '../xlsx-fixture'
 import { startFakeProvider } from '../fake-provider'
+import { confirmSingleRecord } from './single-record-fixture'
 
 let app: ElectronApplication
 let page: Page
@@ -674,11 +675,13 @@ test.describe('账本（真实数据）', () => {
     expect(before.total).toBe(0)
     await expect(page.getByTestId('ledger-empty')).toContainText('还没有账目')
 
-    // 速记行记一笔（离线演示：解析 → 直接入账，无待决卡）
+    // 单笔先待确认，点击现有入账按钮后回账本。
     const cap = page.getByLabel('速记行')
     await cap.fill('星巴克 35')
     await cap.press('Enter')
     await expect(cap).toHaveValue('')
+    await confirmSingleRecord(page, '星巴克')
+    await page.getByTestId('nav-ledger').click()
 
     // 表格出现该行（真数据，不是假数据）
     const row = page.locator('[data-testid="ledger-row"]').first()
@@ -2096,11 +2099,12 @@ test.describe('账本详情改账户（T0928 §5）', () => {
         throw new Error('离线演示引擎 20s 内未就绪')
       })
 
-      // 速记行记一笔（未提账户 → 落默认账户「现金」，离线演示解析即入账）
+      // 未提账户仍落默认现金，但先经过真实确认门。
       const cap = tPage.getByLabel('速记行')
       await cap.fill('午饭 35')
       await cap.press('Enter')
       await expect(cap).toHaveValue('')
+      await confirmSingleRecord(tPage, '午饭')
 
       // 账本屏出现该行，账户列是「现金」
       await tPage.getByTestId('nav-ledger').click()

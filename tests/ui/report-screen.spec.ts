@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as XLSX from 'xlsx'
 import { WECHAT_HEADER } from '../xlsx-fixture'
+import { confirmSingleRecord } from './single-record-fixture'
 
 const p2 = (n: number): string => String(n).padStart(2, '0')
 const monthKey = (d: Date): string => `${d.getFullYear()}-${p2(d.getMonth() + 1)}`
@@ -188,11 +189,12 @@ test.describe('报告屏（跨两个月的真实数据）', () => {
     await readyMock(page)
     // 上月：合成账单（常识表兜住分类 → 直接已确认入账）
     await importBill(page, makePrevMonthBillBuffer())
-    // 本月：速记行记一笔（离线演示 → record 工具 → 已确认）
+    // 本月：单笔先待确认，实点击确认后才供报告断言。
     const capture = page.getByLabel('速记行')
     await capture.fill('滴滴打车 28')
     await capture.press('Enter')
     await expect(capture).toHaveValue('')
+    await confirmSingleRecord(page, '滴滴打车')
     // 等引擎把这一轮收尾（入账事件随后广播，报告屏会自己刷新）
     await expect(page.getByTestId('nav-inbox')).toBeVisible()
     await page.getByTestId('nav-report').click()

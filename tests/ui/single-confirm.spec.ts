@@ -1,11 +1,11 @@
 import { test, expect, _electron, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { confirmSingleRecord } from './single-record-fixture'
 
-const root = resolve('.scratch/hotfix-single-confirm')
 async function fixture() {
-  const dir = mkdtempSync(join(root, 'electron-'))
+  const dir = mkdtempSync(join(tmpdir(), 'mz-single-ui-'))
   const data = join(dir, 'data'), profile = join(dir, 'profile')
   mkdirSync(data); mkdirSync(profile)
   const env = { ...process.env, MZ_DATA_DIR: data }

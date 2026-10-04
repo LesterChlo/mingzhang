@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openSchemaDb } from './helpers'
 import { seed } from '../src/main/db/seed'
@@ -13,7 +14,7 @@ import type { TransactionCardData } from '../src/shared/types'
 const dbs: ReturnType<typeof openSchemaDb>[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close() })
 function setup(hasImage = false, visionUnverified = false) {
-  const db = openSchemaDb(join(mkdtempSync(join(process.env.TMPDIR!, 'mz-single-')), 'test.db'))
+  const db = openSchemaDb(join(mkdtempSync(join(tmpdir(), 'mz-single-')), 'test.db'))
   dbs.push(db)
   seed(db)
   const ctx: TurnContext = { sessionId: 'synthetic', sourceMessageId: 'single', hasImage, visionUnverified, attachments: hasImage ? ['synthetic.png'] : [] }

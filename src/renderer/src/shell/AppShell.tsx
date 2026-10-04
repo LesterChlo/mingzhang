@@ -105,22 +105,11 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
 
       <main className="mz-main">
         {/* §2.1 速记行：五屏共享、钉在内容区顶部（数据接线单：可输入、可提交、可拖图） */}
-        <CaptureBar />
+        {view !== 'settings' && <CaptureBar />}
 
         <div className="mz-view" key={view}>
           {view === 'inbox' && (
-            <InboxView
-              onGoReport={() => setView('report')}
-              onGoLedger={() => {
-                setLedgerInitialFilter({ state: 'needs_review' })
-                setView('ledger')
-              }}
-              // ②B G-03：主按钮不再把人送去账本数数，而是开面板并直接下指令
-              onGoHandle={() => {
-                openPanel()
-                void send('把待分类的账按建议归类')
-              }}
-            />
+            <InboxView onGoReport={() => setView('report')} />
           )}
           {view === 'ledger' && <LedgerView initialFilter={ledgerInitialFilter} />}
           {view === 'report' && (

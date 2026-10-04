@@ -25,7 +25,7 @@ import {
 import { aggregate, PERIODS, type Period } from '../domain/queries'
 import { createPending } from '../domain/pending'
 import { prepareDeleteGate } from '../domain/gates'
-import { createRule, findByCondition, updateRuleAction, deactivateRule } from '../domain/rules'
+
 import { classifyByMerchant, BUILTIN_CONFIDENCE } from '../domain/builtin-categories'
 import { createM2Tools } from './tools-m2'
 import { createM3Tools } from './tools-m3'
@@ -33,7 +33,7 @@ import { createM4Tools } from './tools-m4'
 import { createM5Tools } from './tools-m5'
 import type {
   DeleteGateCardData,
-  RuleCardData,
+
   SplitCardData,
   TransactionCardData,
   QueryResultCardData,
@@ -493,8 +493,7 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
     name: 'teach',
     label: '教规则',
     description:
-      '教学/撤销规则。「以后星巴克都算咖啡」→ action=set_category, match_merchant=星巴克, category_name=咖啡；' +
-      '「撤销那条规则」→ action=remove + rule_id（规则卡片上有 id）。同条件规则已存在时工具会返回冲突，请转问用户是否覆盖。',
+      '引导用户到界面显式保存或管理分类规则。此工具只提供操作指引，不创建、覆盖或停用规则，overwrite 不构成用户授权。',
     parameters: Type.Object({
       action: StringEnum(['set_category', 'remove'], { description: 'set_category=教新规则 remove=撤销规则' }),
       match_merchant: Type.Optional(Type.String({ description: 'set_category 时：商户关键词' })),
@@ -503,82 +502,10 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
       rule_id: Type.Optional(Type.Integer({ description: 'remove 时：规则 id（规则卡片上有）' })),
       overwrite: Type.Optional(Type.Boolean({ description: '用户同意覆盖同条件旧规则时传 true' })),
     }),
-    execute: async (_toolCallId, params) => {
-      const ctx = getTurnContext()
-
-      if (params.action === 'remove') {
-        if (!params.rule_id) throw new Error('撤销规则需要 rule_id（规则卡片上有）')
-        const exists = db.prepare('SELECT id FROM rules WHERE id=?').get(params.rule_id)
-        if (!exists) throw new Error(`规则 #${params.rule_id} 不存在`)
-        deactivateRule(db, params.rule_id, { sourceMessageId: ctx.sourceMessageId })
-        const card: RuleCardData = {
-          kind: 'rule',
-          ruleId: params.rule_id,
-          merchant: '',
-          op: '',
-          categoryName: '',
-          provenance: '',
-          hitCount: 0,
-          undone: true,
-        }
-        return { content: [{ type: 'text', text: `已撤销规则 #${params.rule_id}。` }], details: { card } }
-      }
-
-      if (!params.match_merchant || !params.category_name) {
-        throw new Error('教规则需要 match_merchant（商户关键词）和 category_name（分类）')
-      }
-      const condition = {
-        match: 'merchant' as const,
-        op: (params.op ?? 'contains') as 'contains' | 'equals',
-        value: params.match_merchant,
-      }
-      const action = { set_category: params.category_name }
-      const existing = findByCondition(db, condition)
-      if (existing && !params.overwrite) {
-        const prevAction = JSON.parse(existing.action) as { set_category: string }
-        const card: RuleCardData = {
-          kind: 'rule',
-          ruleId: existing.id,
-          merchant: params.match_merchant,
-          op: condition.op,
-          categoryName: prevAction.set_category,
-          provenance: existing.provenance,
-          hitCount: existing.hit_count,
-          conflict: true,
-        }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `已有同样条件的规则 #${existing.id}（${params.match_merchant} → ${prevAction.set_category}）。要覆盖成 ${params.category_name} 吗？用户同意后带 overwrite=true 重新调用。`,
-            },
-          ],
-          details: { card },
-        }
-      }
-      let ruleId: number
-      if (existing && params.overwrite) {
-        updateRuleAction(db, existing.id, action, { sourceMessageId: ctx.sourceMessageId, reasoning: '用户确认覆盖规则' })
-        ruleId = existing.id
-      } else {
-        ruleId = createRule(db, condition, action, { sourceMessageId: ctx.sourceMessageId, reasoning: '用户教学' })
-      }
-      const card: RuleCardData = {
-        kind: 'rule',
-        ruleId,
-        merchant: params.match_merchant,
-        op: condition.op,
-        categoryName: params.category_name,
-        provenance: 'manual',
-        hitCount: 0,
-      }
-      return {
-        content: [
-          { type: 'text', text: `学会了：以后「${params.match_merchant}」算「${params.category_name}」（规则 #${ruleId}）。` },
-        ],
-        details: { card },
-      }
-    },
+    execute: async () => ({
+      content: [{ type: 'text', text: '规则只能由用户在界面明确保存、修改或停用。请在批次分类复核完成后点击保存规则，或前往设置中的分类规则管理；对话不会自动学习规则。' }],
+      details: {},
+    }),
   })
 
   return [recordTool, queryTool, updateTool, deleteTool, restoreTool, splitTool, teachTool, ...createM2Tools({ db, getTurnContext }), ...createM3Tools({ db, getTurnContext }), ...createM4Tools({ db, getTurnContext }), ...createM5Tools({ db, getTurnContext })]

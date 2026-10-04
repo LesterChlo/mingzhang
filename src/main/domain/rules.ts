@@ -5,13 +5,14 @@
 // 移植自 legacy backend/domain/rules.py。
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import { getOrCreateCategoryId, writeAudit } from './ledger'
+import { writeAudit } from './ledger'
 import { nowIso } from '../db/time'
 
 export interface RuleCondition {
   match: 'merchant'
   op: 'contains' | 'equals'
   value: string
+  direction?: 'expense' | 'income'
 }
 
 export interface RuleAction {
@@ -50,23 +51,59 @@ export function findByCondition(db: Database, condition: RuleCondition): RuleRow
   return null
 }
 
-function matches(condition: RuleCondition, merchant: string | null): boolean {
-  if (!merchant || condition.match !== 'merchant') return false
-  const value = String(condition.value ?? '')
-  if (!value) return false
-  if (condition.op === 'equals') return merchant === value
-  return merchant.includes(value) // contains（默认）
+export function normalizeRuleMerchant(value: string): string {
+  return value.replace(/　/g, ' ').trim().replace(/\s+/g, ' ')
 }
 
-export function matchRule(db: Database, merchant: string | null): RuleRow | null {
+function matches(condition: RuleCondition, merchant: string | null, direction?: 'expense' | 'income'): boolean {
+  if (!merchant || !condition || condition.match !== 'merchant') return false
+  if (condition.direction !== undefined && condition.direction !== direction) return false
+  if (typeof condition.value !== 'string' || !['equals', 'contains'].includes(condition.op)) return false
+  const value = normalizeRuleMerchant(condition.value)
+  const normalized = normalizeRuleMerchant(merchant)
+  if (!value) return false
+  if (condition.op === 'equals') return normalized === value
+  return normalized.includes(value)
+}
+
+export interface RuleMatchResult {
+  status: 'none' | 'matched' | 'conflict' | 'invalid'
+  rule: RuleRow | null
+  ruleIds: number[]
+  categories: string[]
+}
+
+/** Pure read: conflicting or broken matching rules never silently win by recency. */
+export function resolveRuleMatch(db: Database, merchant: string | null, direction?: 'expense' | 'income'): RuleMatchResult {
+  const rows: RuleRow[] = []
+  const categories = new Set<string>()
+  let invalid = false
   for (const row of listRules(db)) {
     try {
-      if (matches(JSON.parse(row.condition) as RuleCondition, merchant)) return row
+      const condition = JSON.parse(row.condition) as RuleCondition
+      if (!condition || condition.match !== 'merchant' || !['equals','contains'].includes(condition.op) || typeof condition.value !== 'string' || !normalizeRuleMerchant(condition.value) || (condition.direction !== undefined && !['expense','income'].includes(condition.direction))) { invalid = true; rows.push(row); continue }
+      if (!matches(condition, merchant, direction)) continue
+      rows.push(row)
+      const action = JSON.parse(row.action) as RuleAction
+      if (typeof action?.set_category !== 'string' || !action.set_category.trim()) invalid = true
+      else {
+        const name = action.set_category.trim()
+        const valid = direction ? db.prepare('SELECT id FROM categories WHERE name=? AND kind=?').get(name, direction) : db.prepare('SELECT id FROM categories WHERE name=?').get(name)
+        if (!valid) invalid = true
+        else categories.add(name)
+      }
     } catch {
-      continue
+      // A corrupt condition cannot be evaluated; a corrupt matching action blocks fallback.
+      invalid = true
+      if (!rows.includes(row)) rows.push(row)
     }
   }
-  return null
+  const status = invalid ? 'invalid' : categories.size > 1 ? 'conflict' : rows.length ? 'matched' : 'none'
+  return { status, rule: status === 'matched' ? rows[0] : null, ruleIds: rows.map(r => r.id), categories: [...categories] }
+}
+
+export function matchRule(db: Database, merchant: string | null, direction?: 'expense' | 'income'): RuleRow | null {
+  return resolveRuleMatch(db, merchant, direction).rule
 }
 
 export function createRule(
@@ -196,7 +233,7 @@ export function applyRules(
     sourceMessageId?: string | null
   },
 ): { categoryId: number | null; ruleId: number | null } {
-  const rule = matchRule(db, input.merchant)
+  const rule = matchRule(db, input.merchant, input.kind)
   if (!rule) return { categoryId: null, ruleId: null }
   let action: RuleAction
   try {
@@ -205,10 +242,9 @@ export function applyRules(
     return { categoryId: null, ruleId: null }
   }
   if (!action.set_category) return { categoryId: null, ruleId: null }
-  const categoryId = getOrCreateCategoryId(db, action.set_category, input.kind, {
-    sourceMessageId: input.sourceMessageId ?? null,
-    changedBy: 'llm',
-  })
+  const category = db.prepare('SELECT id FROM categories WHERE name=? AND kind=?').get(action.set_category.trim(), input.kind) as {id:number} | undefined
+  if (!category) return { categoryId: null, ruleId: null }
+  const categoryId = category.id
   bumpHit(db, rule.id, { txId: input.txId ?? null, sourceMessageId: input.sourceMessageId ?? null })
   return { categoryId, ruleId: rule.id }
 }

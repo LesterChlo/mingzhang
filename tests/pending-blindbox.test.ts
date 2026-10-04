@@ -98,17 +98,14 @@ describe('② 同商户批量条 groupSameMerchant', () => {
   })
 })
 
-describe('③ 规则自动学习 answerPending', () => {
-  it('分类答复 → 建 merchant contains 规则（provenance=learned_from_correction），主流程照常 confirmed', () => {
+describe('③ 补答不自动学习 answerPending', () => {
+  it('分类答复 → 仅确认本笔，不自动创建规则', () => {
     const { txId, gateId } = makeConfirmPending('麦当劳测试店')
     const r = answerPending(db, gateId, '餐饮', { sessionId: 's1', via: 'panel' })
     expect(r.text).toContain('confirmed')
     expect(getTransaction(db, txId)?.state).toBe('confirmed')
     const rows = ruleRows()
-    expect(rows).toHaveLength(1)
-    expect(JSON.parse(rows[0].condition)).toEqual({ match: 'merchant', op: 'contains', value: '麦当劳测试店' })
-    expect(JSON.parse(rows[0].action)).toEqual({ set_category: '餐饮' })
-    expect(rows[0].provenance).toBe('learned_from_correction')
+    expect(rows).toHaveLength(0)
   })
   it('已有同条件规则 → 跳过不覆盖（条数不变、动作不变），主流程不阻塞', () => {
     const { gateId } = makeConfirmPending('麦当劳测试店')
@@ -154,6 +151,7 @@ describe('④ 常识分类兜底', () => {
     expect(matchBuiltinCategory('拼多多', 'income')).toBeNull()
   })
   it('用户规则优先于常识：同商户已有手动规则 → 走规则不走常识', () => {
+    getOrCreateCategoryId(db, '数码', 'expense', { changedBy: 'user' })
     createRule(
       db,
       { match: 'merchant', op: 'contains', value: '拼多多' },

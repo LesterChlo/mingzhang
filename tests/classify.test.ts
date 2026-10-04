@@ -261,6 +261,8 @@ describe('D-01 批量归类 · 执行与撤销', () => {
       sessionId: 's1',
     })
 
+    // 分类必须已存在；覆写不能偷偷新建分类。
+    getOrCreateCategoryId(db, '咖啡茶饮', 'expense', { changedBy: 'user' })
     const result = applyClassify(db, gateId, [{ groupKey: starGroup.groupKey, categoryName: '咖啡茶饮' }])
     expect(result!.appliedCount).toBe(1)
     expect(catName(db, a)).toBe('咖啡茶饮')
@@ -435,6 +437,7 @@ describe('classify_suggest 模型可见文本', () => {
       suggestionSource: category ? 'builtin' : null,
     })
     const p: ClassifyProposalDTO = {
+      proposalVersion: 'synthetic-format-only',
       generatedAt: '2026-01-01T00:00:00.000Z',
       batchId: null,
       pendingCount: 4,

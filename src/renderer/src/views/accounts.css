@@ -1,0 +1,53 @@
+.mz-accounts{height:100%;min-height:0;display:flex;flex-direction:column;padding:24px 28px 0;color:var(--text-1)}
+.mz-accounts-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px;flex-shrink:0}
+.mz-accounts h1{font-size:24px;font-weight:600;margin:0;letter-spacing:-.5px}
+.mz-accounts-head p{margin:7px 0 0;font-size:13px;color:var(--text-3)}
+.mz-accounts-month{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px}
+.mz-accounts-month input,.mz-account-editor input,.mz-account-editor select{background:var(--bg-1);color:var(--text-1);border:1px solid var(--line-strong);border-radius:8px;padding:10px 12px;font:inherit;min-width:0}
+.mz-accounts-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;flex:1;min-height:0;padding-bottom:24px}
+.mz-accounts-content,.mz-accounts-aside{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.mz-accounts-content{padding-right:2px}
+.mz-accounts-section+.mz-accounts-section{margin-top:30px}
+.mz-accounts-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
+.mz-accounts-section h2,.mz-account-editor h2,.mz-accounts-scope h2{margin:0;font-size:16px;font-weight:600}
+.mz-accounts-section-head span{display:block;margin-top:5px;font-size:12px;color:var(--text-3)}
+.mz-account-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,255px),1fr));gap:14px}
+.mz-account-card{background:var(--bg-1);border:1px solid var(--line);border-radius:16px;padding:20px;display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:12px;align-items:center}
+.mz-account-mark{width:40px;height:40px;border-radius:12px;background:var(--accent-dim);color:var(--accent);display:grid;place-items:center;font-size:18px;font-weight:600}
+.mz-account-mark.is-alipay{background:var(--info-dim);color:var(--info)}
+.mz-account-mark.is-wechat{background:var(--bg-2);color:var(--text-2)}
+.mz-account-name{min-width:0}
+.mz-account-name h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.mz-account-name span{font-size:11px;color:var(--text-3);display:block;margin-top:4px}
+.mz-account-rename{border:0;background:none;color:var(--text-3);font-size:12px;padding:5px;cursor:pointer}
+.mz-account-rename:hover,.mz-account-footer button:hover{color:var(--accent)}
+.mz-account-flows{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:12px 0 7px}
+.mz-account-flows span{display:block;font-size:11px;color:var(--text-3);margin-bottom:6px}
+.mz-account-flows strong{font-size:20px;line-height:1.4;letter-spacing:-.5px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.mz-account-footer{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:12px}
+.mz-account-footer span{font-size:11px;color:var(--text-3)}
+.mz-account-footer button{padding:3px 0;background:none;border:0;color:var(--text-2);font-size:12px;cursor:pointer}
+.mz-category-group{padding:16px 20px;background:var(--bg-1);border:1px solid var(--line);border-radius:14px;margin-top:10px}
+.mz-category-group h3{margin:0 0 12px;font-size:12px;color:var(--text-3);font-weight:500}
+.mz-category-tags{display:flex;flex-wrap:wrap;gap:8px}
+.mz-category-tags button{display:flex;align-items:center;gap:14px;color:var(--text-1);background:var(--bg-2);border:1px solid transparent;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;max-width:100%;overflow-wrap:anywhere}
+.mz-category-tags button:hover{border-color:var(--line-strong)}
+.mz-category-tags span{color:var(--text-3);font-size:10px}
+.mz-accounts-budget,.mz-accounts-scope,.mz-account-editor{padding:22px;background:var(--bg-1);border:1px solid var(--line);border-radius:16px}
+.mz-accounts-eyebrow{font-size:11px;letter-spacing:.6px;color:var(--text-3);display:block;margin-bottom:12px}
+.mz-accounts-budget strong{display:block;font-size:24px;letter-spacing:-.4px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.mz-accounts-budget p,.mz-accounts-scope p,.mz-account-editor p{font-size:12px;line-height:1.8;color:var(--text-3);margin:12px 0 18px}
+.mz-accounts-budget button{width:100%;justify-content:center;font-size:12px}
+.mz-accounts-scope{margin-top:14px}
+.mz-accounts-scope p{margin-bottom:12px}
+.mz-accounts-scope-note{font-size:12px;line-height:1.8;background:var(--bg-2);padding:12px;border-radius:10px;color:var(--text-2)}
+.mz-account-editor label{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-2);margin-top:18px}
+.mz-account-editor input,.mz-account-editor select{width:100%;box-sizing:border-box}
+.mz-account-editor-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}
+.mz-accounts-edit-error{font-size:12px;line-height:1.7;color:var(--danger);overflow-wrap:anywhere}
+.mz-accounts-notice{font-size:13px;line-height:1.6;margin:0 0 14px;color:var(--text-2)}
+.mz-accounts-loading,.mz-accounts-empty{padding:28px;background:var(--bg-1);border:1px solid var(--line);border-radius:14px;color:var(--text-3);font-size:13px}
+.mz-accounts-muted{color:var(--text-3);font-size:12px}
+.mz-accounts button:focus-visible,.mz-accounts input:focus-visible,.mz-accounts select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:1000px){.mz-accounts-layout{grid-template-columns:minmax(0,1fr) 245px;gap:16px}.mz-accounts{padding-left:20px;padding-right:20px}.mz-account-card{padding:16px}}
+@media(max-width:780px){.mz-accounts-layout{display:flex;flex-direction:column;overflow-y:auto}.mz-accounts-content,.mz-accounts-aside{overflow:visible;flex-shrink:0}.mz-accounts-head{align-items:flex-start;flex-wrap:wrap}.mz-accounts-month{margin-top:4px}.mz-accounts-section-head{flex-wrap:wrap}}

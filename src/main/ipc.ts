@@ -23,6 +23,10 @@ import {
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
 import { listMonthSummaries } from './domain/reports'
+import { listAccountSummaries } from './domain/account-summary'
+import { createAccount, renameAccountById } from './domain/accounts'
+import { createCategory, renameCategory } from './domain/categories'
+import type { CreateAccountInput, RenameAccountInput, CreateCategoryInput, RenameCategoryInput } from '../shared/types'
 import { applyClassify, buildClassifyProposal, getClassifyResults, prepareClassify, undoClassify, validateBatchId } from './domain/classify'
 import { listCategoryRules, saveCategoryRule, updateCategoryRule, deactivateCategoryRule } from './domain/category-rules'
 import type { SaveCategoryRuleInput, UpdateCategoryRuleInput, DeactivateCategoryRuleInput } from '../shared/types'
@@ -382,6 +386,13 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     if (!db) throw new Error('账本未就绪')
     return db
   }
+  // 账户/分类管理：不经过模型；运行时验证由领域入口执行，不信任 TS 类型。
+  ipcMain.handle('mz:getAccountSummary', (_e, month?: string) => listAccountSummaries(requireDb(), month))
+  ipcMain.handle('mz:createAccount', (_e, input: CreateAccountInput) => createAccount(requireDb(), input))
+  ipcMain.handle('mz:renameAccount', (_e, input: RenameAccountInput) => renameAccountById(requireDb(), input))
+  ipcMain.handle('mz:createCategory', (_e, input: CreateCategoryInput) => createCategory(requireDb(), input))
+  ipcMain.handle('mz:renameCategory', (_e, input: RenameCategoryInput) => renameCategory(requireDb(), input))
+
   ipcMain.handle('mz:prepareClassify', (_e, input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion?: string }) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('归类参数无效')
     if (typeof input.expectedProposalVersion !== 'string' || !input.expectedProposalVersion) throw new Error('归类建议版本缺失，请重新读取并复核')

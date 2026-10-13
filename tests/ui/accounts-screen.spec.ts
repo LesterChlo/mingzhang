@@ -1,0 +1,53 @@
+import { test, expect, _electron } from '@playwright/test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+test('账户管理：新增/改名/重复拒绝/分类/预算入口真IPC往返', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'mz-accounts-ui-'))
+  const profile = mkdtempSync(join(tmpdir(), 'mz-accounts-udd-'))
+  const app = await _electron.launch({ args: ['.', `--user-data-dir=${profile}`], env: { ...process.env, MZ_DATA_DIR: data } as Record<string, string> })
+  try {
+    const page = await app.firstWindow()
+    await page.getByTestId('nav-accounts').click()
+    await expect(page.getByTestId('accounts-view')).toBeVisible()
+    await expect(page.getByTestId('account-card')).toHaveCount(4)
+    await expect(page.getByTestId('account-count').first()).toHaveText('0 笔已确认收支')
+    await page.getByTestId('account-add').click()
+    await page.getByLabel('账户名称', { exact: true }).fill('合成新卡')
+    await page.getByLabel('账户类型', { exact: true }).selectOption('bank')
+    await page.getByTestId('management-save').click()
+    await expect(page.getByTestId('account-card')).toHaveCount(5)
+    const card = page.getByTestId('account-card').filter({ has: page.getByRole('heading', { name: '合成新卡', exact: true }) })
+    await expect(card).toBeVisible()
+    const before = await page.evaluate(() => window.mz.listAccounts())
+    const original = before.find(a => a.name === '合成新卡')!
+    await card.getByRole('button', { name: '修改账户名称 合成新卡' }).click()
+    await page.getByLabel('账户名称', { exact: true }).fill('合成改名卡')
+    await page.getByTestId('management-save').click()
+    await expect(page.getByTestId('management-notice')).toContainText('已保存名称')
+    const after = await page.evaluate(() => window.mz.listAccounts())
+    expect(after.find(a => a.id === original.id)?.name).toBe('合成改名卡')
+    await page.getByTestId('account-add').click()
+    await page.getByLabel('账户名称', { exact: true }).fill('合成改名卡')
+    await page.getByTestId('management-save').click()
+    await expect(page.getByTestId('management-error')).toBeVisible()
+    expect(await page.evaluate(() => window.mz.listAccounts())).toEqual(after)
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+    await page.getByTestId('category-add').click()
+    await page.getByLabel('分类名称', { exact: true }).fill('合成收入类')
+    await page.getByLabel('分类方向', { exact: true }).selectOption('income')
+    await page.getByTestId('management-save').click()
+    await expect(page.getByTestId('category-item').filter({ hasText: '合成收入类' })).toBeVisible()
+    const cats = await page.evaluate(() => window.mz.listCategories())
+    expect(cats.find(c => c.name === '合成收入类')?.kind).toBe('income')
+    await page.getByTestId('accounts-budget').click()
+    await expect(page.getByRole('tab', { name: '账单与备份', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('button', { name: '返回账户', exact: true }).click()
+    await expect(page.getByTestId('accounts-view')).toBeVisible()
+    await page.getByTestId('theme-toggle').click()
+    await expect(page.getByTestId('account-card')).toHaveCount(5)
+    const ledger = await page.evaluate(() => window.mz.listLedger({ limit: 50 }))
+    expect(ledger.total).toBe(0)
+  } finally { await app.close() }
+})

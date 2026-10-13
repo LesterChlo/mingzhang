@@ -76,7 +76,8 @@ test('外壳② 五屏都可达（切屏后选中态跟随）', async () => {
   await expect(page.getByTestId('report-view')).toBeVisible()
 
   await page.getByTestId('nav-accounts').click()
-  await expect(page.getByTestId('view-placeholder')).toContainText('账户')
+  // issue #25: the same navigation assertion now targets the real accounts screen.
+  await expect(page.getByTestId('accounts-view')).toBeVisible()
 
   // 设置屏复用既有 SettingsView：能进去、能看见它自己的小标题
   await page.getByTestId('nav-settings').click()

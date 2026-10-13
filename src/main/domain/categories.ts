@@ -22,6 +22,7 @@ export function createCategory(db: Database, input: CreateCategoryInput): number
     if (db.prepare('SELECT id FROM categories WHERE name=? AND kind=?').get(name, input.kind)) {
       throw new Error(`该方向的分类「${name}」已存在`)
     }
+    assertTargetNameUnambiguous(db, name, input.kind)
     const ts = nowIso()
     const cur = db.prepare('INSERT INTO categories (name,kind,parent_id,created_at,updated_at) VALUES (?,?,NULL,?,?)')
       .run(name, input.kind, ts, ts)
@@ -47,6 +48,20 @@ function jsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
+function assertTargetNameUnambiguous(db: Database, name: string, kind: 'expense' | 'income'): void {
+  if (!db.prepare('SELECT id FROM categories WHERE name=? AND kind<>?').get(name, kind)) return
+  // 目标名已有旧无方向习惯时，新增另一方向的同名分类会静默扩大覆盖；不猜方向或改规则。
+  const rules = db.prepare('SELECT condition,action FROM rules WHERE active=1').all() as { condition: string; action: string }[]
+  for (const rule of rules) {
+    const condition = jsonObject(rule.condition)
+    if (!condition || condition.direction !== undefined || condition.match !== 'merchant' || (condition.op !== 'equals' && condition.op !== 'contains') || typeof condition.value !== 'string' || !condition.value.trim()) continue
+    const action = jsonObject(rule.action)
+    if (action && typeof action.set_category === 'string' && action.set_category.trim() === name) {
+      throw new Error('旧分类习惯缺少收支方向且同名有歧义，请先停用旧习惯，再按方向重新保存')
+    }
+  }
+}
+
 export function renameCategory(db: Database, input: RenameCategoryInput): void {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分类改名参数无效')
   if (!Number.isSafeInteger(input.categoryId) || input.categoryId <= 0) throw new Error('分类 ID 参数无效')
@@ -60,6 +75,7 @@ export function renameCategory(db: Database, input: RenameCategoryInput): void {
       throw new Error(`该方向的分类「${name}」已存在`)
     }
     if (name === row.name) return
+    assertTargetNameUnambiguous(db, name, row.kind)
     const rules = db.prepare('SELECT id,condition,action,active FROM rules ORDER BY id').all() as { id: number; condition: string; action: string; active: number }[]
     // 无方向旧规则只能在改名前后均无同名歧义时迁移，否则必须让用户先处理习惯。
     const legacyAmbiguous = !!db.prepare('SELECT id FROM categories WHERE kind<>? AND name IN (?,?)').get(row.kind, row.name, name)

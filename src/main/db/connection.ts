@@ -34,8 +34,11 @@ export function readStartupDek(dbFile: string, secrets: SecretsStore): string | 
   }
   const dir = dirname(dbFile)
   const base = basename(dbFile)
+  const restorePrefix = `${base}.restore-`
   const hasEvidence = existsSync(dbFile) || SIDECAR_SUFFIXES.some((suffix) => existsSync(`${dbFile}${suffix}`)) ||
-    (existsSync(dir) && readdirSync(dir).some((name) => name.startsWith(`${base}.restore-`)))
+    (existsSync(dir) && readdirSync(dir).some((name) => process.platform === 'win32'
+      ? name.toLowerCase().startsWith(restorePrefix.toLowerCase())
+      : name.startsWith(restorePrefix)))
   if (hasEvidence) {
     throw new Error('已有账本或恢复痕迹但密钥缺失：拒绝生成新密钥或自动恢复，请保留原账本与恢复文件并找回原密钥。')
   }

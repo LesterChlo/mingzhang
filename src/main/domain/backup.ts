@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { join, basename, dirname, resolve, sep, isAbsolute } from 'node:path'
 import { argon2id } from 'hash-wasm'
 import { runMigrations } from '../db/migrations'
+import { foldSqliteIdentifier } from '../db/sqlite-identifier'
 import schemaSqlText from '../db/schema.sql?raw'
 
 const SNAPSHOT_KEEP = 7
@@ -76,7 +77,7 @@ export function normalizeSchemaDdl(sql: string): string {
         }
         content += sql[i++]
       }
-      const name = content.toLowerCase()
+      const name = foldSqliteIdentifier(content)
       const text = ch === "'" || !closed ? sql.slice(start, i) :
         /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
       tokens.push({ text, punct: false, bare: false })
@@ -88,7 +89,7 @@ export function normalizeSchemaDdl(sql: string): string {
     const start = i++
     while (i < sql.length && !isSpaceCh(sql[i]) && !PUNCT_ADJACENT.test(sql[i]) &&
       !["'", '"', '`', '['].includes(sql[i])) i++
-    tokens.push({ text: sql.slice(start, i).toLowerCase(), punct: false, bare: true })
+    tokens.push({ text: foldSqliteIdentifier(sql.slice(start, i)), punct: false, bare: true })
   }
   const out: string[] = []
   let lastPunct = true
@@ -145,7 +146,7 @@ function readSchemaObjects(db: Database, type: SqliteObjectType): Record<string,
     )
     .all(type) as { name: string; sql: string }[]
   const out: Record<string, string> = {}
-  for (const r of rows) out[r.name.toLowerCase()] = normalizeSchemaDdl(r.sql)
+  for (const r of rows) out[foldSqliteIdentifier(r.name)] = normalizeSchemaDdl(r.sql)
   return out
 }
 
@@ -159,10 +160,10 @@ function readTableContracts(db: Database): Record<string, ProductionTableContrac
     const cols = db
       .prepare(`PRAGMA table_info("${r.name.replace(/"/g, '""')}")`)
       .all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[]
-    out[r.name.toLowerCase()] = {
-      name: r.name.toLowerCase(),
+    out[foldSqliteIdentifier(r.name)] = {
+      name: foldSqliteIdentifier(r.name),
       autoincrement: /\bautoincrement\b/i.test(r.sql),
-      columns: cols.map((c) => ({ name: c.name.toLowerCase(), type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
+      columns: cols.map((c) => ({ name: foldSqliteIdentifier(c.name), type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
       sql: normalizeSchemaDdl(r.sql),
     }
   }
@@ -177,7 +178,7 @@ export function getProductionSchemaContract(): ProductionSchemaContract {
   const names = new Set<string>()
   const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?([A-Za-z_][A-Za-z0-9_]*)["'`\]]?/gi
   let m: RegExpExecArray | null
-  while ((m = re.exec(schemaSqlText)) !== null) names.add(m[1].toLowerCase())
+  while ((m = re.exec(schemaSqlText)) !== null) names.add(foldSqliteIdentifier(m[1]))
   const tables = [...names]
   const mem = new DatabaseCtor(':memory:')
   try {

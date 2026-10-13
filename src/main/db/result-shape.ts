@@ -1,4 +1,5 @@
 import type { Database, Statement } from 'better-sqlite3-multiple-ciphers'
+import { foldSqliteIdentifier } from './sqlite-identifier'
 
 interface Column { name: string; column: string | null; table: string | null; database: string | null }
 type Mode = 'flat' | 'raw' | 'pluck' | 'expand'
@@ -19,7 +20,7 @@ function projectionAliases(sql: string, columns: Column[]): Set<number> | null {
   let depth = 0, projecting = false
   for (const token of tokens) {
     if (token.startsWith('--') || token.startsWith('/*')) continue
-    const word = token.toLowerCase()
+    const word = foldSqliteIdentifier(token)
     if (!projecting) {
       if (depth === 0 && (word === 'select' || word === 'returning')) projecting = true
       else if (token === '(') depth++
@@ -33,7 +34,7 @@ function projectionAliases(sql: string, columns: Column[]): Set<number> | null {
     else if (token === ')') depth--
   }
   if (!projecting) return new Set()
-  if (['distinct', 'all'].includes(expressions[0][0]?.toLowerCase())) expressions[0].shift()
+  if (['distinct', 'all'].includes(foldSqliteIdentifier(expressions[0][0] ?? ''))) expressions[0].shift()
   const stars = expressions.filter(e => e[e.length - 1] === '*').length
   // Multiple wildcard projections are deliberately left native if positions cannot be proven.
   if (stars > 1) return null
@@ -45,7 +46,7 @@ function projectionAliases(sql: string, columns: Column[]): Set<number> | null {
     for (let i = 0; i < expr.length; i++) {
       if (expr[i] === '(') level++
       else if (expr[i] === ')') level--
-      else if (level === 0 && expr[i].toLowerCase() === 'as') aliases.add(index)
+      else if (level === 0 && foldSqliteIdentifier(expr[i]) === 'as') aliases.add(index)
     }
     const tail = expr[expr.length - 1]
     const alias = tail?.startsWith('[') ? tail.slice(1, -1) :
@@ -70,9 +71,9 @@ export function installResultShape(db: Database, schema: Record<string, string[]
     const aliases = projectionAliases(sql, columns)
     if (aliases === null) return s
     const names = columns.map((c, i) => {
-      const name = c.column?.toLowerCase()
+      const name = c.column === null ? null : foldSqliteIdentifier(c.column)
       return !aliases.has(i) && c.database === 'main' && c.table && name &&
-        c.name === c.column && schema[c.table.toLowerCase()]?.includes(name) ? name : c.name
+        c.name === c.column && schema[foldSqliteIdentifier(c.table)]?.includes(name) ? name : c.name
     })
     if (names.every((name, i) => name === columns[i].name)) return s
     const get = s.get, all = s.all, iterate = s.iterate

@@ -1,0 +1,7 @@
+.mz-ap-notice{margin:12px 0;padding:12px 14px;border-radius:10px;background:var(--bg-2);color:var(--text-2);font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.mz-ap-notice span{display:block;font-size:11px;color:var(--text-3);margin-bottom:4px}
+.mz-ap-notice p{margin:0}
+.mz-ap-history-image{margin-top:10px;color:var(--text-3);font-size:11px}
+.mz-ap-history-image summary{cursor:pointer;list-style:none;width:fit-content;display:flex;align-items:center;gap:8px}
+.mz-ap-history-image summary img{display:block;max-width:120px;max-height:90px;border-radius:8px;border:1px solid var(--line);object-fit:contain}
+.mz-ap-history-image .mz-ap-history-full{display:block;max-width:100%;max-height:480px;margin-top:10px;object-fit:contain;border-radius:8px}

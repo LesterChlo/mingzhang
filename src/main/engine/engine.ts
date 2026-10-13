@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import type { ResolvedPaths } from '../paths'
-import { parseSessionHistory } from '../history'
+import { parseSessionHistory, preserveFailedSend } from '../history'
 import type { ConfigStore, AppConfig, ProviderConfig } from '../config/store'
 import type { SecretsStore } from '../secrets/store'
 import { MINGZHANG_SYSTEM_PROMPT } from './system-prompt'
@@ -123,14 +123,26 @@ export class Engine {
   private lastThinkingBroadcastAt = 0
   // 执行反馈与防重（第 5 单 C1）：同一 gate/交易的确认只允许一个在执行，拦下连点与并发。
   private readonly confirming = new Set<string>()
+  private readonly streamId = randomUUID()
+  private eventCursor = 0
+  private activeChats = 0
+  private readonly broadcast: (evt: ChatEvent, sessionId?: string) => void
 
   constructor(
     private readonly db: Database,
     private readonly paths: ResolvedPaths,
     private readonly config: ConfigStore,
     private readonly secrets: SecretsStore,
-    private readonly broadcast: Broadcaster,
-  ) {}
+    broadcast: Broadcaster,
+  ) {
+    // 所有既有广播共用同一实例流身份，payload逐字保留。
+    this.broadcast = (evt, sessionId = this.sessionId) => broadcast({ ...evt, sessionId, streamId: this.streamId, eventSeq: ++this.eventCursor })
+  }
+
+  /** 只读主进程快照状态；不启动模型、不修改会话。 */
+  get panelHistoryState(): { sessionId: string | null; streamId: string; eventCursor: number; busy: boolean } {
+    return { sessionId: this.session?.sessionId ?? null, streamId: this.streamId, eventCursor: this.eventCursor, busy: this.activeChats > 0 }
+  }
 
   get ready(): boolean {
     return this.session !== null
@@ -265,7 +277,8 @@ export class Engine {
 
     this.session = session
     this.turn.sessionId = session.sessionId
-    session.subscribe((evt) => this.onPiEvent(evt))
+    session.subscribe((evt) => this.onPiEvent(evt, session.sessionId))
+    this.broadcast({ type: 'session-changed' })
   }
 
   async dispose(): Promise<void> {
@@ -298,7 +311,7 @@ export class Engine {
     await this.start({ openPath: path })
   }
 
-  private onPiEvent(evt: { type: string; [k: string]: unknown }): void {
+  private onPiEvent(evt: { type: string; [k: string]: unknown }, sessionId: string): void {
     // 空闲看门狗的"有进展"判定：**只认真正向前走的事件**（模型在说话 / 在调工具 / 一轮开收）。
     // 刻意**不**把 auto_retry_* / summarization_retry_* / entry_appended / queue_update /
     // compaction_* / session_* / agent_settled 算作进展——它们是"管线还在跳、但这一轮没前进"，
@@ -311,7 +324,7 @@ export class Engine {
         const inner = evt.assistantMessageEvent as { type: string; delta?: string } | undefined
         if (inner?.type === 'text_delta' && inner.delta) {
           this.assistantText += inner.delta
-          this.broadcast({ type: 'text-delta', payload: { delta: inner.delta } })
+          this.broadcast({ type: 'text-delta', payload: { delta: inner.delta } }, sessionId)
         } else if (inner?.type === 'thinking_delta' && inner.delta) {
           // 真机第二轮：模型"想很久"的这段时间界面一个事件都收不到（全黑），
           // 只能靠自己的定时器猜——90 秒时就会谎报"引擎没有回应"。
@@ -319,17 +332,17 @@ export class Engine {
           // 不节流、不丢字——界面据此把"模型在想什么"流式显示出来。
           // 心跳保留（折叠条走秒靠它），仍按每秒最多一条节流。
           const now = Date.now()
-          this.broadcast({ type: 'thinking-delta', payload: { delta: inner.delta, at: now } })
+          this.broadcast({ type: 'thinking-delta', payload: { delta: inner.delta, at: now } }, sessionId)
           if (now - this.lastThinkingBroadcastAt >= THINKING_BROADCAST_THROTTLE_MS) {
             this.lastThinkingBroadcastAt = now
-            this.broadcast({ type: 'progress', payload: { phase: 'thinking', at: now } })
+            this.broadcast({ type: 'progress', payload: { phase: 'thinking', at: now } }, sessionId)
           }
         }
         break
       }
       case 'tool_execution_start':
         this.toolCalls.push({ name: String(evt.toolName ?? '') })
-        this.broadcast({ type: 'tool-start', payload: { toolName: evt.toolName } })
+        this.broadcast({ type: 'tool-start', payload: { toolName: evt.toolName, toolCallId: evt.toolCallId } }, sessionId)
         break
       case 'tool_execution_end': {
         const result = evt.result as { isError?: boolean; content?: { type: string; text?: string }[]; details?: Record<string, unknown> } | undefined
@@ -341,15 +354,16 @@ export class Engine {
           type: 'tool-end',
           payload: {
             toolName: evt.toolName,
+            toolCallId: evt.toolCallId,
             isError: Boolean(evt.isError ?? result?.isError),
             text: text || (evt.isError ? String((evt.result as { Error?: string; message?: string } | undefined)?.message ?? (evt.result as { Error?: string } | undefined)?.Error ?? '工具执行失败') : ''),
             details: result?.details ?? {},
           },
-        })
+        }, sessionId)
         break
       }
       case 'agent_end':
-        this.broadcast({ type: 'agent-end' })
+        this.broadcast({ type: 'agent-end' }, sessionId)
         break
       default:
         break
@@ -375,7 +389,25 @@ export class Engine {
     text: string,
     images: { fileName?: string; dataBase64: string; mediaType: string }[],
   ): Promise<void> {
+    const sessionId = this.sessionId
+    this.activeChats++
+    try {
+      await this.doSendChatTurn(text, images, sessionId)
+    } finally {
+      // 首回显前即 busy；所有正常/错误/超时/准备失败都在权威收尾前解除。
+      this.activeChats--
+      this.broadcast({ type: 'turn-end' }, sessionId)
+    }
+  }
+
+  private async doSendChatTurn(
+    text: string,
+    images: { fileName?: string; dataBase64: string; mediaType: string }[],
+    eventSessionId: string,
+  ): Promise<void> {
     if (!this.session) throw new Error('引擎未就绪')
+    // 当前轮的对象在任何回显/异步前固定，前置失败只能落到原会话。
+    const session = this.session
     // B：附件原图落 attachments/（原图默认保留），文件名随 turn 传给工具（imports.source_ref）
     const savedAttachments: string[] = []
     for (const img of images) {
@@ -406,7 +438,7 @@ export class Engine {
     // 插完 run 行、发 prompt **之前**广播——速记行/面板发的消息都走这一条，
     // 所以面板流里拿得到自己那条用户气泡（哪怕这一轮稍后超时或报错，回显也已落地）。
     // text 逐字用入参：不 trim、不改写（改写的是模型上下文，不是用户看到的那句）。
-    this.broadcast({ type: 'user-message', payload: { text, hasImage: images.length > 0 } })
+    this.broadcast({ type: 'user-message', payload: { text, hasImage: images.length > 0 } }, eventSessionId)
 
     const imageContent: ImageContent[] = images.map((img) => ({
       type: 'image',
@@ -441,7 +473,7 @@ export class Engine {
       if (timedOut) return
       timedOut = true
       timeoutMessage = message
-      abortTask = this.abortTurn(message)
+      abortTask = this.abortTurn(message, eventSessionId)
       // 这一轮已经判死：不依赖 prompt() 自己 settle（abort 卡住时它可能永远 pending）
       turnOver()
     }
@@ -456,7 +488,8 @@ export class Engine {
       }
     }, Math.max(100, Math.min(1000, Math.floor(idleMs / 4))))
 
-    const promptTask = this.session.prompt(text, { images: imageContent })
+    let preflight: boolean | undefined
+    const promptTask = session.prompt(text, { images: imageContent, preflightResult: success => { preflight = success } })
     // 被放弃的轮次不许变成 unhandledRejection（下面的 race 走的是 promptTask 派生 promise）
     promptTask.catch(() => undefined)
     try {
@@ -476,32 +509,32 @@ export class Engine {
         throw err instanceof TurnTimeoutError ? err : new TurnTimeoutError(timeoutMessage)
       }
       this.finishRun('failed')
-      this.broadcast({ type: 'error', payload: { message: (err as Error).message } })
-      throw err
+      let failure = err
+      if (preflight === false) {
+        try {
+          preserveFailedSend(session.sessionManager, text, images, (err as Error).message)
+        } catch (saveError) {
+          // 原拒绝原因必须可见；写入失败不伪称历史已保存，也不补跑模型。
+          failure = new Error(`${(err as Error).message}；本地失败记录未能确认保存：${(saveError as Error).message}`, { cause: err })
+        }
+      }
+      this.broadcast({ type: 'error', payload: { message: (failure as Error).message } }, eventSessionId)
+      throw failure
     } finally {
       clearInterval(watchdog)
-      // 一轮收尾信号（ChatEvent 里早有这个事件，引擎这前从不广播）。
-      // 位置就在这里：包住"prompt → 结论"的那段 try/catch 的 finally，正常结束、
-      // 抛错、TurnTimeoutError（超时/abort）三条路径全部汇聚于此 —— 恰好一次，
-      // 且是这一轮最后一个事件（在 agent-end / error 之后）。
-      // 超时轮尤其需要它：那一轮是 abort 收尾的，agent_end 只是"碰巧赶上"的兜底
-      // （实测 hang 模式下它会来，但那是 abort 恰好触发的副产物，不是契约），
-      // 从前界面只能靠一条 error 去猜这一轮完了没有。
-      // 刻意**不**放进 sendChat 的 finally：那个 finally 只负责放掉恢复互斥令牌
-      // （globalRestoreGate.endTurn），beginTurnToken() 返回空时根本没有轮。
-      this.broadcast({ type: 'turn-end' })
+      // turn-end 统一由外层 busy 的 finally 广播（恢复门拒绝没有进入该轮）。
     }
   }
 
   /** 空闲/总预算到期：中止当前轮、落 failed、广播真实原因。
    *  abortRetry() 必须先叫：端点持续不回时 pi 正在退避重试（auto_retry_start），
    *  只 agent.abort() 停不掉那个退避定时器，这一轮就还会被拖下去（实测 18s 阈值下 60s 未收敛）。 */
-  private async abortTurn(message: string): Promise<void> {
+  private async abortTurn(message: string, eventSessionId: string): Promise<void> {
     // 先把结论落下来：这一轮已判定超时/失败。abort 只是收尾清理——它要是卡住
     // （实测通常 3ms，但没有上限），"这一轮失败了"这个事实不该跟着缺席，
     // 否则界面只能退回自己的盲定时器（真机第二轮的教训）。
     this.finishRun('failed')
-    this.broadcast({ type: 'error', payload: { message } })
+    this.broadcast({ type: 'error', payload: { message } }, eventSessionId)
     try {
       this.session?.abortRetry()
       await this.session?.abort()

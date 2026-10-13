@@ -39,6 +39,8 @@ const api: MingZhangApi = {
   setMock: (enabled) => ipcRenderer.invoke('mz:setMock', enabled),
   listLedger: (filter) => ipcRenderer.invoke('mz:listLedger', filter),
   getBatchResult: (gateId) => ipcRenderer.invoke('mz:getBatchResult', gateId),
+  getBatchPresentation: (gateId) => ipcRenderer.invoke('mz:getBatchPresentation', gateId),
+  setBatchPresentation: (gateId, patch) => ipcRenderer.invoke('mz:setBatchPresentation', gateId, patch),
   getClassifyResults: (batchId) => ipcRenderer.invoke('mz:getClassifyResults', batchId),
   getClassifyProposal: (batchId) => ipcRenderer.invoke('mz:getClassifyProposal', batchId),
   // Forward the displayed proposalVersion verbatim; main IPC rejects missing/stale tokens.
@@ -51,6 +53,7 @@ const api: MingZhangApi = {
   undoClassify: (classifyId) => ipcRenderer.invoke('mz:undoClassify', classifyId),
   txDetail: (txId) => ipcRenderer.invoke('mz:txDetail', txId),
   loadHistory: () => ipcRenderer.invoke('mz:loadHistory'),
+  getPanelHistory: () => ipcRenderer.invoke('mz:getPanelHistory'),
   pendingGateCards: () => ipcRenderer.invoke('mz:pendingGateCards'),
   answerPending: (gateId, answer) => ipcRenderer.invoke('mz:answerPending', gateId, answer),
   listSessions: () => ipcRenderer.invoke('mz:listSessions'),

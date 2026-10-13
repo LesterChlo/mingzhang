@@ -14,20 +14,61 @@
 //
 // 样式一律走 styles/ 的既有 token，不新增自由配色。
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { BatchResultSummaryDTO } from '../../../shared/types'
 import { money } from '../lib/shellFormat'
+import { humanError } from '../lib/ledgerFilter'
 
 export interface BatchResultBarProps {
   summary: BatchResultSummaryDTO
-  /** ✕ 关闭：本单仅内存态（持久化 = D-04）。 */
+  /** ✕ 关闭：由store保存本批次的展示状态。 */
   onDismiss: () => void
 }
 
 export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): ReactElement {
   const [dupOpen, setDupOpen] = useState(false)
   const [exOpen, setExOpen] = useState(false)
+  const [stateReady, setStateReady] = useState(false)
+  const [stateError, setStateError] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
+  const gateRef = useRef(summary.gateId)
+  const writes = useRef(Promise.resolve())
+  useEffect(() => {
+    let cancelled = false
+    gateRef.current = summary.gateId
+    setStateReady(false)
+    setDupOpen(false)
+    setExOpen(false)
+    void window.mz.getBatchPresentation(summary.gateId).then(state => {
+      if (cancelled) return
+      setDupOpen(state.duplicatesOpen)
+      setExOpen(state.excludedOpen)
+      setStateError(null)
+      setStateReady(true)
+    }).catch(e => {
+      if (!cancelled) setStateError(humanError(e))
+    })
+    return () => { cancelled = true }
+  }, [summary.gateId, retry])
+  const toggle = (field: 'duplicatesOpen' | 'excludedOpen', value: boolean): void => {
+    const gateId = summary.gateId
+    if (field === 'duplicatesOpen') setDupOpen(value)
+    else setExOpen(value)
+    writes.current = writes.current.then(async () => {
+      try {
+        await window.mz.setBatchPresentation(gateId, { [field]: value })
+        if (gateRef.current === gateId) setStateError(null)
+      } catch (e) {
+        if (gateRef.current !== gateId) return
+        setStateError(`折叠状态未能保存：${humanError(e)}`)
+        try {
+          const state = await window.mz.getBatchPresentation(gateId)
+          if (gateRef.current === gateId) { setDupOpen(state.duplicatesOpen); setExOpen(state.excludedOpen) }
+        } catch { /* 原因已可见，保留当前内容供核对。 */ }
+      }
+    })
+  }
   const { booked, needsCategory, excluded, duplicates } = summary.counts
 
   return (
@@ -78,13 +119,15 @@ export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): Rea
         </div>
       )}
 
+      {stateError && <p className="mz-ap-error" data-testid="br-state-error" role="alert">{stateError} <button className="mz-btn" data-testid="br-state-retry" onClick={() => setRetry(value => value + 1)}>重新读取</button></p>}
       <div className="mz-br-groups">
         <button
           type="button"
           className="mz-br-toggle"
           data-testid="br-dup-toggle"
           aria-expanded={dupOpen}
-          onClick={() => setDupOpen((v) => !v)}
+          disabled={!stateReady}
+          onClick={() => toggle('duplicatesOpen', !dupOpen)}
         >
           <span className={`mz-chev${dupOpen ? ' is-open' : ''}`} aria-hidden="true">
             ▸
@@ -115,7 +158,8 @@ export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): Rea
           className="mz-br-toggle"
           data-testid="br-excluded-toggle"
           aria-expanded={exOpen}
-          onClick={() => setExOpen((v) => !v)}
+          disabled={!stateReady}
+          onClick={() => toggle('excludedOpen', !exOpen)}
         >
           <span className={`mz-chev${exOpen ? ' is-open' : ''}`} aria-hidden="true">
             ▸

@@ -70,7 +70,11 @@ export interface ChatEvent {
     | 'tx-restored' // 账本详情里恢复了一笔（UI 触发）
     | 'progress' // 引擎存活信号（思考期等无正文阶段；渲染层据此重置自己的保险丝）
     | 'thinking-delta' // 思考正文增量（契约 A：模型 thinking 期间把 inner.delta 如实推给界面）
+    | 'session-changed' // 新开/续接会话成功，重新取历史快照
     | 'error' // 错误
+  sessionId?: string
+  streamId?: string
+  eventSeq?: number
   // biome-ignore lint/suspicious/noExplicitAny: 事件载荷按 type 区分，此处从简
   payload?: any
 }
@@ -519,6 +523,20 @@ export interface BatchResultSummaryDTO {
   excludedRows: null
 }
 
+export interface BatchPresentationDTO {
+  dismissed: boolean
+  duplicatesOpen: boolean
+  excludedOpen: boolean
+}
+
+export interface PanelHistorySnapshotDTO {
+  sessionId: string | null
+  streamId: string | null
+  eventCursor: number
+  busy: boolean
+  messages: ChatMessageDTO[]
+}
+
 export interface ChatMessageDTO {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -526,6 +544,9 @@ export interface ChatMessageDTO {
   streaming?: boolean
   card?: CardData
   toolName?: string
+  toolCallId?: string
+  timestamp?: number
+  thinkingText?: string
   isError?: boolean
   /** 用户消息自带图片（发送时与历史恢复时都保留，气泡内渲染缩略图）。 */
   images?: { previewUrl: string; fileName: string }[]
@@ -623,4 +644,8 @@ export interface MingZhangApi {
   continueSession: (path: string) => Promise<boolean>
   /** 加载当前会话历史（重启后可见之前的对话，含工具卡片与图片）。 */
   loadHistory: () => Promise<ChatMessageDTO[]>
+  /** 同步主进程快照，游标之后的事件可由渲染层缓冲重放。 */
+  getPanelHistory: () => Promise<PanelHistorySnapshotDTO>
+  getBatchPresentation: (gateId: number) => Promise<BatchPresentationDTO>
+  setBatchPresentation: (gateId: number, patch: Partial<BatchPresentationDTO>) => Promise<BatchPresentationDTO>
 }

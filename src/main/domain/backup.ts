@@ -24,6 +24,7 @@ import {
   mkdtempSync,
   copyFileSync as fsCopyFileSync,
   renameSync as fsRenameSync,
+  type Stats,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename, dirname, resolve, sep, isAbsolute } from 'node:path'
@@ -138,6 +139,8 @@ export function normalizeSchemaDdl(sql: string): string {
     }
     if (ch === '[') {
       const close = sql.indexOf(']', i + 1)
+      // 方括号只是标识符定界符；内容必须保留，否则列名/CHECK 操作数会被吞掉。
+      pushWord(sql.slice(i + 1, close === -1 ? n : close).toLowerCase())
       i = close === -1 ? n : close + 1
       continue
     }
@@ -220,7 +223,7 @@ function readSchemaObjects(db: Database, type: SqliteObjectType): Record<string,
     )
     .all(type) as { name: string; sql: string }[]
   const out: Record<string, string> = {}
-  for (const r of rows) out[r.name] = normalizeSchemaDdl(r.sql)
+  for (const r of rows) out[r.name.toLowerCase()] = normalizeSchemaDdl(r.sql)
   return out
 }
 
@@ -234,10 +237,10 @@ function readTableContracts(db: Database): Record<string, ProductionTableContrac
     const cols = db
       .prepare(`PRAGMA table_info("${r.name.replace(/"/g, '""')}")`)
       .all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[]
-    out[r.name] = {
-      name: r.name,
+    out[r.name.toLowerCase()] = {
+      name: r.name.toLowerCase(),
       autoincrement: /\bautoincrement\b/i.test(r.sql),
-      columns: cols.map((c) => ({ name: c.name, type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
+      columns: cols.map((c) => ({ name: c.name.toLowerCase(), type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
       sql: normalizeSchemaDdl(r.sql),
     }
   }
@@ -252,7 +255,7 @@ export function getProductionSchemaContract(): ProductionSchemaContract {
   const names = new Set<string>()
   const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?([A-Za-z_][A-Za-z0-9_]*)["'`\]]?/gi
   let m: RegExpExecArray | null
-  while ((m = re.exec(schemaSqlText)) !== null) names.add(m[1])
+  while ((m = re.exec(schemaSqlText)) !== null) names.add(m[1].toLowerCase())
   const tables = [...names]
   const mem = new DatabaseCtor(':memory:')
   try {
@@ -284,6 +287,12 @@ export function getProductionSchemaContract(): ProductionSchemaContract {
  * journal 持久化契约（B6）：同目录临时文件 → 写完 → 文件 fsync → 原子 rename → 尽力 fsync 父目录。
  */
 export interface RestoreFileOps {
+  /** 孤儿恢复预检也经 seam；exists 不代替 lstat（悬空链接必须拒绝）。 */
+  existsSync: (path: string) => boolean
+  lstatSync: (path: string) => Stats
+  realpathSync: (path: string) => string
+  readdirSync: (path: string) => string[]
+  mkdtempSync: (prefix: string) => string
   rmSync: (path: string, opts?: { force?: boolean; recursive?: boolean }) => void
   renameSync: (oldPath: string, newPath: string) => void
   copyFileSync: (src: string, dst: string) => void
@@ -411,6 +420,11 @@ function defaultAtomicWriteJson(file: string, data: string): void {
 }
 
 const defaultRestoreFileOps: RestoreFileOps = {
+  existsSync: (p) => existsSync(p),
+  lstatSync: (p) => lstatSync(p),
+  realpathSync: (p) => realpathSync(p),
+  readdirSync: (p) => readdirSync(p),
+  mkdtempSync: (p) => mkdtempSync(p),
   rmSync: (p, o) => fsRmSync(p, o as { force?: boolean }),
   renameSync: (a, b) => fsRenameSync(a, b),
   copyFileSync: (s, d) => fsCopyFileSync(s, d),
@@ -613,7 +627,7 @@ export function listPendingRestoreArtifacts(targetDbFile: string): string[] {
   const dir = dirname(targetDbFile)
   const base = basename(targetDbFile)
   const artifacts = existsSync(dir)
-    ? readdirSync(dir).filter((name) => name.startsWith(`${base}.restore-`))
+    ? readdirSync(dir).filter((name) => name.startsWith(`${base}.restore-`) || name.startsWith(`.${base}.restore-quarantine-`))
     : []
   if (artifacts.length === 0) return []
   // 目标缺失：任何恢复工件都不得被当成「首次启动」（与既有 B1/R6 行为一致，保持保守）。
@@ -622,6 +636,8 @@ export function listPendingRestoreArtifacts(targetDbFile: string): string[] {
   const residues = residuesFileOf(targetDbFile)
   const forward = `${targetDbFile}.restore-forward`
   const pending = artifacts.filter((name) => {
+    // 隔离证据：有效目标时不阻断；目标缺失时由上面的整集合守卫拒绝造空库。
+    if (name.startsWith(`.${base}.restore-quarantine-`)) return false
     // 残留清单：记录，不是未完成工件。
     if (name === residues || name === basename(residues)) return false
     // 回滚槽（主文件或 sidecar）：按设计保留的能力，不是未完成工件。
@@ -756,6 +772,103 @@ export function replaceWithRollback(candidateDbFile: string, targetDbFile: strin
   }
 }
 
+/** 无正式 journal：只隔离尚未提交的候选/临时日志，绝不猜测 forward 的归属。 */
+function quarantineOrphanRestoreArtifacts(targetDbFile: string, dekHex?: string): void {
+  const dir = resolve(dirname(targetDbFile))
+  const base = basename(targetDbFile)
+  if (!restoreFileOps.existsSync(dir)) return
+  const names = restoreFileOps.readdirSync(dir)
+  if (
+    !restoreFileOps.existsSync(targetDbFile) &&
+    names.some((name) => name.startsWith(`.${base}.restore-quarantine-`))
+  ) {
+    throw new Error('目标账本缺失但隔离恢复证据仍在，拒绝新建空账本（请人工核对）')
+  }
+  const pendingNames = names.filter((name) => name.startsWith(`${base}.restore-`))
+  const rollbackNames = SIDECARS.map((suffix) => `${base}.restore-rollback${suffix}`)
+  const orphans: string[] = []
+  for (const name of pendingNames) {
+    if (rollbackNames.includes(name) || name === `${base}.restore-residues.json`) continue
+    const candidatePrefix = `${base}.restore-candidate-`
+    const tmpPrefix = `${base}.restore-journal.json.tmp-`
+    if (
+      (name.startsWith(candidatePrefix) && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(name.slice(candidatePrefix.length))) ||
+      (name.startsWith(tmpPrefix) && /^\d+(?:-\d+)?$/.test(name.slice(tmpPrefix.length)))
+    ) {
+      orphans.push(join(dir, name))
+    } else {
+      throw new Error(`无正式恢复日志且工件状态未知，拒绝自动恢复并保留全部证据：${name}`)
+    }
+  }
+  if (orphans.length === 0) return
+
+  // 必须先预检全部路径，后打开目标，最后才 rename。悬空链接不能被 exists=false 隐藏。
+  const root = restoreFileOps.realpathSync(dir)
+  const assertRegularFile = (file: string, label: string, nonempty = false): void => {
+    const full = resolve(file)
+    if (dirname(full) !== dir) throw new Error(`${label}路径越界，拒绝自动恢复：${file}`)
+    const exists = restoreFileOps.existsSync(full)
+    const st = restoreFileOps.lstatSync(full)
+    if (!exists || st.isSymbolicLink() || !st.isFile() || (nonempty && st.size === 0)) {
+      throw new Error(`${label}缺失、为空或不是普通非链接文件，拒绝自动恢复：${file}`)
+    }
+    if (dirname(restoreFileOps.realpathSync(full)) !== root) {
+      throw new Error(`${label}解析路径越界，拒绝自动恢复：${file}`)
+    }
+  }
+  for (const file of orphans) assertRegularFile(file, '孤儿恢复工件')
+  assertRegularFile(targetDbFile, '孤儿恢复目标账本', true)
+  const targetSidecars: string[] = []
+  for (const suffix of ['-wal', '-shm', '-journal']) {
+    const file = `${targetDbFile}${suffix}`
+    let present = restoreFileOps.existsSync(file)
+    try {
+      restoreFileOps.lstatSync(file)
+      present = true
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    if (present) {
+      assertRegularFile(file, '孤儿恢复目标附属文件')
+      targetSidecars.push(file)
+    }
+  }
+  if (!dekHex || !/^[0-9a-fA-F]{64}$/.test(dekHex)) {
+    throw new Error('孤儿恢复缺少有效目标 DEK，拒绝自动恢复并保留全部证据')
+  }
+  // SQLite 的 readonly 也会改写 WAL 的 shm 读标记；只在自有隔离副本上验证，
+  // 将 main/wal/shm/journal 一起复制以验证真实目标的完整状态，不触碰唯一证据。
+  const stagingDir = restoreFileOps.mkdtempSync(join(tmpdir(), 'mz-orphan-validate-'))
+  const staging = join(stagingDir, basename(targetDbFile))
+  try {
+    restoreFileOps.copyFileSync(targetDbFile, staging)
+    for (const file of targetSidecars) restoreFileOps.copyFileSync(file, `${staging}${file.slice(targetDbFile.length)}`)
+    const db = new DatabaseCtor(staging, { readonly: true, fileMustExist: true })
+    try {
+      db.pragma(`key = "x'${dekHex}'"`)
+      db.pragma(`cipher='${CIPHER}'`)
+      validateLedgerDatabase(db, '孤儿恢复目标账本')
+    } finally {
+      db.close()
+    }
+  } finally {
+    restoreFileOps.rmSync(stagingDir, { recursive: true, force: true })
+  }
+
+  for (const file of orphans) {
+    // 点前缀不属于 openLedger 的未完成工件；原 basename 留在名字里，证据可追溯。
+    const evidence = join(dir, `.${base}.restore-quarantine-${randomBytes(16).toString('hex')}-${basename(file)}`)
+    if (restoreFileOps.existsSync(evidence)) throw new Error(`隔离证据路径已存在，拒绝覆盖：${evidence}`)
+    try {
+      restoreFileOps.lstatSync(evidence)
+      throw new Error(`隔离证据路径已存在，拒绝覆盖：${evidence}`)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    restoreFileOps.renameSync(file, evidence)
+  }
+}
+
 export type InterruptedRestoreOutcome = 'no-op' | 'recovered-original' | 'recovered-candidate' | 'recovered-rollback'
 
 /**
@@ -784,15 +897,40 @@ export function recoverInterruptedRestore(
   }
   // B6：journal 内的全部工件路径必须经统一白名单校验
   if (journal) {
+    if (
+      typeof journal.candidate !== 'string' || !journal.candidate ||
+      typeof journal.rollback !== 'string' || !journal.rollback ||
+      typeof journal.forward !== 'string' || !journal.forward ||
+      !basename(journal.candidate).startsWith(`${basename(targetDbFile)}.restore-candidate-`) ||
+      resolve(journal.rollback) !== resolve(rollback) ||
+      resolve(journal.forward) !== resolve(`${targetDbFile}.restore-forward`)
+    ) {
+      throw new Error('恢复日志损坏（工件字段缺失或槽位角色不匹配），拒绝自动恢复并保留全部磁盘证据')
+    }
     assertRestoreArtifact(targetDbFile, journal.candidate, '恢复日志候选')
     assertRestoreArtifact(targetDbFile, journal.rollback, '恢复日志回滚槽')
     assertRestoreArtifact(targetDbFile, journal.forward, '恢复日志前向槽')
+    // replacing 不使用 forward：其存在就是未知冲突，必须在消费候选/搬回回滚槽之前拒绝。
+    if (journal.phase === 'replacing') {
+      for (const suffix of [...SIDECARS, '-journal']) {
+        const file = `${journal.forward}${suffix}`
+        let present = restoreFileOps.existsSync(file)
+        try {
+          restoreFileOps.lstatSync(file)
+          present = true
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        }
+        if (present) throw new Error('账本恢复尚未收敛（forward 前向槽状态未知），journal 与全部磁盘证据已保留')
+      }
+    }
   }
   const targetExists = existsSync(targetDbFile)
   if (!journal) {
     if (!targetExists && (existsSync(rollback) || existsSync(`${rollback}-wal`) || existsSync(`${rollback}-shm`))) {
       throw new Error('检测到未完成的账本恢复：目标库缺失但回滚副本仍在，拒绝新建空账本（请先完成恢复）')
     }
+    quarantineOrphanRestoreArtifacts(targetDbFile, opts?.dekHex)
     return 'no-op'
   }
   // B5/B6：rollback 与正向恢复共用同一 journal；按 phase 分流收敛。

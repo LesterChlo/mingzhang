@@ -6,7 +6,7 @@
 //
 // 纪律：
 //   ① 面板**关着也订阅**事件：关面板不许打断正在跑的一轮，重开要能看到期间发生的一切；
-//   ② 消息流是**进程内**的（本单不做跨重启持久化 = D-04），但组件不卸载，历史不因开合而丢；
+//   ② 消息流从真实会话历史读回；初始化与实时流按进程、会话和序号分桶，历史不另存副本；
 //   ③ 归类映射表只认引擎落的真卡：tool-end 的 details.card 与 pendingGateCards 两路同源，
 //      绝不自己编一张表出来；
 //   ④ 行内改分类**只落本地 state**，只有点确认才走 mz.applyClassify 写库。
@@ -47,6 +47,7 @@ import type {
   ClassifyUndoResultDTO,
 } from '../../../shared/types'
 import { appendThinkingDelta } from '../lib/thinking'
+import { eventsAfterSnapshot, panelItemsFromHistory } from '../lib/panelHistory'
 
 /** 工具名 → 中文标签。认不出来的工具照原名显示，不编一个像模像样的说法。 */
 export const TOOL_LABELS: Record<string, string> = {
@@ -72,15 +73,17 @@ export function toolLabel(toolName: string): string {
 /** 流里的一项。id 只用于 React key 与「找最后一条同名运行中工具」。 */
 export type PanelItem =
   /** 用户气泡。pending = 本地乐观入流、还没等到引擎回显确认（见文件头）。 */
-  | { id: number; kind: 'user'; text: string; pending: boolean }
-  | { id: number; kind: 'assistant'; text: string }
+  | { id: number | string; kind: 'user'; text: string; pending: boolean; images?: { previewUrl: string; fileName: string }[] }
+  | { id: number | string; kind: 'assistant'; text: string }
+  | { id: number | string; kind: 'notice'; text: string }
   /** 思考条：seconds 走秒；text 是这一轮 thinking-delta 累积出的真实正文（契约A），
    *  超 THINK_TEXT_CAP 截断并标记；正文为空时展开区保留"未接"占位（不编内容）。 */
-  | { id: number; kind: 'thinking'; seconds: number; running: boolean; text: string; truncated: boolean }
-  | { id: number; kind: 'turn-end' }
+  | { id: number | string; kind: 'thinking'; seconds: number; running: boolean; text: string; truncated: boolean; historical?: boolean }
+  | { id: number | string; kind: 'turn-end' }
   | {
-      id: number
+      id: number | string
       kind: 'tool'
+      toolCallId?: string
       toolName: string
       status: 'running' | 'done' | 'error'
       summary: string
@@ -103,6 +106,9 @@ export interface PanelValue {
   items: PanelItem[]
   /** 这一轮还在跑（思考条正在走秒；输入框禁用）。 */
   busy: boolean
+  historyLoading: boolean
+  historyError: string | null
+  reloadHistory: () => Promise<void>
   /** 归类方案卡：流里来的与门卡来的同源去重，按到达顺序，最新一张是当前那张。 */
   plans: ClassifyPlanCardData[]
   /** 行内编辑：gateId → (groupKey → 输入值)。只在本进程内存里，点确认前绝不写库。 */
@@ -135,6 +141,10 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<PanelItem[]>([])
   const [busy, setBusy] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const loadHistoryRef = useRef<() => Promise<void>>(async () => {})
+  const reloadHistory = useCallback(() => loadHistoryRef.current(), [])
   const [plans, setPlans] = useState<ClassifyPlanCardData[]>([])
   const [planEdits, setPlanEdits] = useState<Record<number, Record<string, string>>>({})
   const [outcomes, setOutcomes] = useState<Record<number, ClassifyOutcome>>({})
@@ -142,8 +152,23 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
   const seq = useRef(0)
   const nextId = useCallback(() => ++seq.current, [])
   const busyRef = useRef(false)
-  const thinkIdRef = useRef<number | null>(null)
+  const thinkIdRef = useRef<number | string | null>(null)
   const thinkStartRef = useRef(0)
+  const resolvedPlans = useRef(new Set<number>())
+  const gateEpoch = useRef(0)
+  const failureNoticeId = useRef<number | null>(null)
+  const localSendNoticeId = useRef<number | null>(null)
+  const pendingSendReplyId = useRef<number | null>(null)
+  const showFailure = useCallback((id: number, text: string) => {
+    setItems(previous => {
+      const index = previous.findIndex(item => item.id === id && item.kind === 'notice')
+      const notice: PanelItem = { id, kind: 'notice', text }
+      if (index < 0) return [...previous, notice]
+      const next = previous.slice()
+      next[index] = notice
+      return next
+    })
+  }, [])
 
   const setBusyBoth = useCallback((v: boolean) => {
     busyRef.current = v
@@ -234,7 +259,11 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
 
   const refreshGates = useCallback(async () => {
     try {
+      const epoch = gateEpoch.current
       const gates = await window.mz.pendingGateCards()
+      if (epoch !== gateEpoch.current) return
+      const live = new Set(gates.filter(g => g.field === 'batch_classify' && g.card.kind === 'classify-plan').map(g => g.gateId))
+      setPlans(prev => prev.filter(p => live.has(p.gateId) || resolvedPlans.current.has(p.gateId)))
       for (const g of gates) {
         if (g.field === 'batch_classify' && g.card.kind === 'classify-plan') addPlan(g.card)
       }
@@ -243,18 +272,47 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
     }
   }, [addPlan])
 
-  // 事件流：**面板关着也订阅**（关面板不打断任务，期间发生的一切重开都还在）
+  // 先订阅再读快照；快照等待期间的新事件按流身份/序号缓冲，而不是靠相同文本去重。
   useEffect(() => {
-    const off = window.mz.onChatEvent((evt: ChatEvent) => {
+    let disposed = false
+    let generation = 0
+    let syncing = false
+    let deferredSnapshot = false
+    let identity: { sessionId: string | null; streamId: string | null } = { sessionId: null, streamId: null }
+    let cursor = 0
+    let buffered: ChatEvent[] = []
+    const resetSession = (): void => {
+      gateEpoch.current += 1
+      setItems([])
+      setPlans([])
+      setPlanEdits({})
+      setOutcomes({})
+      resolvedPlans.current.clear()
+      failureNoticeId.current = null
+      localSendNoticeId.current = null
+      pendingSendReplyId.current = null
+      thinkIdRef.current = null
+      setBusyBoth(false)
+    }
+    const consume = (evt: ChatEvent): void => {
+      if (identity.streamId === null && evt.streamId && evt.sessionId) identity = { streamId: evt.streamId, sessionId: evt.sessionId }
+      if (evt.sessionId !== identity.sessionId || evt.streamId !== identity.streamId) return
+      if (typeof evt.eventSeq === 'number') {
+        if (evt.eventSeq <= cursor) return
+        cursor = evt.eventSeq
+      }
       switch (evt.type) {
         case 'user-message': {
+          failureNoticeId.current = localSendNoticeId.current ?? nextId()
+          localSendNoticeId.current = null
+          if (evt.payload?.hasImage) deferredSnapshot = true
           confirmUser(String(evt.payload?.text ?? ''))
           break
         }
         case 'text-delta': {
           const delta = String(evt.payload?.delta ?? '')
           if (!delta) break
-          if (!busyRef.current) beginTurn() // 速记行发起的轮：这里补起思考条
+          if (!busyRef.current || thinkIdRef.current === null) beginTurn() // 速记行发起的轮：这里补起思考条
           setItems((prev) => {
             const last = prev[prev.length - 1]
             if (last && last.kind === 'assistant') {
@@ -269,7 +327,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
           // 轮结束后留在条上供展开查看；没有现成思考条就补起一轮（与 text-delta 同口径）。
           const delta = String(evt.payload?.delta ?? '')
           if (!delta) break
-          if (!busyRef.current) beginTurn()
+          if (!busyRef.current || thinkIdRef.current === null) beginTurn()
           const id = thinkIdRef.current
           setItems((prev) =>
             prev.map((it) =>
@@ -279,13 +337,14 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
           break
         }
         case 'tool-start': {
-          if (!busyRef.current) beginTurn()
+          if (!busyRef.current || thinkIdRef.current === null) beginTurn()
           setItems((prev) => [
             ...prev,
             {
               id: ++seq.current,
               kind: 'tool',
               toolName: String(evt.payload?.toolName ?? ''),
+              toolCallId: evt.payload?.toolCallId,
               status: 'running',
               summary: '运行中…',
             },
@@ -300,7 +359,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
             // 找最后一条同名、还在 running 的工具项（嵌套调用时不会串行）
             for (let i = prev.length - 1; i >= 0; i--) {
               const it = prev[i]
-              if (it.kind === 'tool' && it.toolName === toolName && it.status === 'running') {
+              if (it.kind === 'tool' && it.toolName === toolName && it.status === 'running' && (!evt.payload?.toolCallId || it.toolCallId === evt.payload.toolCallId)) {
                 const next = prev.slice()
                 next[i] = { ...it, status: isError ? 'error' : 'done', summary: summary || it.summary }
                 return next
@@ -331,14 +390,17 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
             if (last && last.kind === 'turn-end') return prev
             return [...prev, { id: ++seq.current, kind: 'turn-end' }]
           })
+          if (evt.type === 'turn-end' && deferredSnapshot) {
+            deferredSnapshot = false
+            queueMicrotask(() => { if (!disposed) void loadHistoryRef.current() })
+          }
           break
         }
         case 'error': {
-          // 失败不静默：把引擎给的原文说清楚
-          setItems((prev) => [
-            ...prev,
-            { id: ++seq.current, kind: 'assistant', text: `⚠ ${String(evt.payload?.message ?? '出错了')}` },
-          ])
+          // 引擎失败是本地发送状态，不冒充模型生成的答复。
+          const id = failureNoticeId.current ?? nextId()
+          failureNoticeId.current = id
+          showFailure(id, `发送失败：${String(evt.payload?.message ?? '出错了')}`)
           endTurn()
           break
         }
@@ -350,9 +412,87 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
         default:
           break
       }
+    }
+    const load = async (): Promise<void> => {
+      const request = ++generation
+      syncing = true
+      setHistoryLoading(true)
+      try {
+        const snapshot = await window.mz.getPanelHistory()
+        if (disposed || request !== generation) return
+        if (identity.sessionId !== snapshot.sessionId || identity.streamId !== snapshot.streamId) {
+          resetSession()
+          cursor = 0
+        }
+        identity = { sessionId: snapshot.sessionId, streamId: snapshot.streamId }
+        if (!snapshot.busy) {
+          // 游标已覆盖本地发送的真实回显时，快照里已有该条消息；不能再留乐观副本。
+          const localEchoIncluded = localSendNoticeId.current !== null && buffered.some(event =>
+            event.type === 'user-message' && event.sessionId === snapshot.sessionId && event.streamId === snapshot.streamId
+            && typeof event.eventSeq === 'number' && event.eventSeq <= snapshot.eventCursor,
+          )
+          if (localEchoIncluded) localSendNoticeId.current = null
+          const awaitingLocalEcho = localSendNoticeId.current !== null
+          const recovered = panelItemsFromHistory(snapshot.messages)
+          setItems(previous => {
+            const optimistic = awaitingLocalEcho ? previous.filter(item => item.kind === 'user' && item.pending) : []
+            const thinking = optimistic.length ? previous.filter(item => item.kind === 'thinking' && item.running) : []
+            return [...recovered, ...thinking, ...optimistic]
+          })
+          cursor = snapshot.eventCursor
+          // idle快照负责收口游标前的轮；只有尚未被主进程回显的本地发送继续等待。
+          // 游标后的真实新轮仍由下面的事件重放推进，不取消去重或重新请求模型。
+          if (!awaitingLocalEcho) {
+            // 完整快照已接管这轮；迟到 invoke 不再重复失败回执或结束之后的新轮。
+            pendingSendReplyId.current = null
+            thinkIdRef.current = null
+            setBusyBoth(false)
+          }
+        } else {
+          // 正在写入的一轮不拿半轮快照冒充最终历史；最后turn-end再读取完整JSONL。
+          deferredSnapshot = true
+          setBusyBoth(true)
+        }
+        setHistoryError(null)
+        const queued = snapshot.busy
+          ? buffered.filter(event => event.sessionId === snapshot.sessionId && event.streamId === snapshot.streamId)
+          : eventsAfterSnapshot(buffered, snapshot)
+        buffered = []
+        syncing = false
+        for (const event of queued) consume(event)
+        void refreshGates()
+      } catch (error) {
+        if (disposed || request !== generation) return
+        setHistoryError(String(error).replace(/^Error: /, '').replace(/^Error invoking remote method '[^']*':\s*/, ''))
+        syncing = false
+        const queued = buffered
+        buffered = []
+        for (const event of queued) consume(event)
+      } finally {
+        if (!disposed && request === generation) setHistoryLoading(false)
+      }
+    }
+    const off = window.mz.onChatEvent((evt: ChatEvent) => {
+      if (evt.type === 'session-changed') {
+        identity = { sessionId: evt.sessionId ?? null, streamId: evt.streamId ?? null }
+        cursor = 0
+        buffered = []
+        resetSession()
+        void load()
+        return
+      }
+      if (syncing) buffered.push(evt)
+      else consume(evt)
     })
-    return off
-  }, [addPlan, beginTurn, confirmUser, endTurn, refreshGates])
+    loadHistoryRef.current = load
+    void load()
+    return () => {
+      disposed = true
+      generation += 1
+      off()
+      loadHistoryRef.current = async () => {}
+    }
+  }, [addPlan, beginTurn, confirmUser, endTurn, nextId, refreshGates, setBusyBoth, showFailure])
 
   // 打开面板时拉一次开放门卡：重载、切屏、关着面板跑完一轮之后靠它把方案找回来
   useEffect(() => {
@@ -367,23 +507,30 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
   const send = useCallback(
     async (text: string) => {
       const t = text.trim()
-      if (!t) return
+      if (!t || historyLoading || busyRef.current) return
+      const sessionEpoch = gateEpoch.current
+      const noticeId = nextId()
+      localSendNoticeId.current = noticeId
+      failureNoticeId.current = noticeId
+      pendingSendReplyId.current = noticeId
       beginTurn()
       pushUserLocal(t)
       try {
         await window.mz.sendChat(t, [])
+        if (sessionEpoch !== gateEpoch.current || pendingSendReplyId.current !== noticeId) return
+        pendingSendReplyId.current = null
         // sendChat 的 promise 在整轮结束时 resolve——与 turn-end / agent-end 三重保险收尾，
         // 免得引擎哪天少发一个事件就把输入框永久锁死
         endTurn()
       } catch (e) {
-        setItems((prev) => [
-          ...prev,
-          { id: ++seq.current, kind: 'assistant', text: `⚠ 没发出去：${String(e)}` },
-        ])
+        if (sessionEpoch !== gateEpoch.current || pendingSendReplyId.current !== noticeId) return
+        pendingSendReplyId.current = null
+        // IPC reject 与事件可能以任一顺序到达，同一发送用同一ID回填。
+        showFailure(noticeId, `没发出去：${String(e)}`)
         endTurn()
       }
     },
-    [beginTurn, endTurn, pushUserLocal],
+    [beginTurn, endTurn, nextId, pushUserLocal, historyLoading, showFailure],
   )
 
   const setPlanValue = useCallback((gateId: number, groupKey: string, value: string) => {
@@ -401,6 +548,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
           fail('这道门已经处理过了（可能刚才已确认）')
           return
         }
+        resolvedPlans.current.add(gateId)
         setOutcomes((prev) => ({ ...prev, [gateId]: { gateId, applied: r, undone: null, error: null } }))
         if (r.appliedCount > 0) {
           // 账真的动了 → 收件箱的待决数与结果条必须跟上
@@ -418,6 +566,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
     async (gateId: number, classifyId: string) => {
       try {
         const r = await window.mz.undoClassify(classifyId)
+        resolvedPlans.current.add(gateId)
         setOutcomes((prev) => ({ ...prev, [gateId]: { gateId, applied: null, undone: r, error: null } }))
         notifyLedgerChanged()
         void refreshGates()
@@ -439,6 +588,9 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
       togglePanel,
       items,
       busy,
+      historyLoading,
+      historyError,
+      reloadHistory,
       plans,
       planEdits,
       outcomes,
@@ -455,6 +607,9 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
       togglePanel,
       items,
       busy,
+      historyLoading,
+      historyError,
+      reloadHistory,
       plans,
       planEdits,
       outcomes,

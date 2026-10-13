@@ -125,7 +125,7 @@ export interface InboxValue {
   runSnapshot: () => Promise<void>
   /** 进入收件箱时按批次读回结果条（重载后靠这条恢复；被 ✕ 关掉的那批不会因此复活）。 */
   refreshBatchResult: () => Promise<void>
-  /** 关闭批次结果条：本单仅内存态（跨重启持久化 = D-04），不写库。 */
+  /** 关闭状态按账本与批次写入展示设置；失败恢复可见结果，不动账务。 */
   dismissBatchResult: () => void
   reloadLocal: () => Promise<void>
 }
@@ -148,6 +148,8 @@ export function InboxProvider({ children }: { children: ReactNode }): ReactNode 
   /** 被 ✕ 关掉的那一批（gateId）：关掉后同一批不再自动冒出来，
    *  但**新执行**的批次照常显示（用户关的是"刚才那条"，不是这个功能本身）。 */
   const dismissedGateIdRef = useRef<number | null>(null)
+  const batchReadGeneration = useRef(0)
+  const presentationWrites = useRef(new Map<number, Promise<unknown>>())
   const [snapshots, setSnapshots] = useState<{ name: string; size: number; mtime: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -243,20 +245,36 @@ export function InboxProvider({ children }: { children: ReactNode }): ReactNode 
    * 应用一重启就什么都没了，而"刚才那批入账了吗"恰恰是用户重启后最想知道的。
    * 读不到（没执行过批次 / 账本未就绪）→ null，界面据此不显示，**绝不编数字**。
    */
-  const refreshBatchResult = useCallback(async () => {
-    try {
-      const s = await window.mz.getBatchResult()
-      setBatchResult(s && s.gateId !== dismissedGateIdRef.current ? s : null)
-    } catch {
-      // 读不出来就不显示：结果条是补充说明，缺了不该把整个收件箱拖进错误态
-      setBatchResult(null)
-    }
+  const presentBatch = useCallback(async (summary: BatchResultSummaryDTO | null): Promise<void> => {
+    const request = ++batchReadGeneration.current
+    if (!summary) { setBatchResult(null); return }
+    const pending = presentationWrites.current.get(summary.gateId)
+    if (pending) await pending.catch(() => undefined)
+    const state = await window.mz.getBatchPresentation(summary.gateId)
+    if (request !== batchReadGeneration.current) return
+    setBatchResult(!state.dismissed && summary.gateId !== dismissedGateIdRef.current ? summary : null)
   }, [])
+  const refreshBatchResult = useCallback(async () => {
+    try { await presentBatch(await window.mz.getBatchResult()) }
+    catch (e) { notify({ text: `批次结果读取失败：${engineReason((e as Error).message)}`, tone: 'err' }) }
+  }, [presentBatch, notify])
 
   const dismissBatchResult = useCallback(() => {
-    dismissedGateIdRef.current = batchResult?.gateId ?? null
+    const summary = batchResult
+    if (!summary || presentationWrites.current.has(summary.gateId)) return
+    batchReadGeneration.current += 1
+    dismissedGateIdRef.current = summary.gateId
     setBatchResult(null)
-  }, [batchResult])
+    const write = window.mz.setBatchPresentation(summary.gateId, { dismissed: true })
+      .catch(e => {
+        if (dismissedGateIdRef.current === summary.gateId) {
+          dismissedGateIdRef.current = null
+          void refreshBatchResult()
+        }
+        notify({ text: `关闭状态未能保存：${engineReason((e as Error).message)}`, tone: 'err' })
+      }).finally(() => { presentationWrites.current.delete(summary.gateId) })
+    presentationWrites.current.set(summary.gateId, write)
+  }, [batchResult, notify, refreshBatchResult])
 
   const refresh = useCallback(async () => {
     try {
@@ -271,7 +289,7 @@ export function InboxProvider({ children }: { children: ReactNode }): ReactNode 
       setGateCards(gates)
       setCategories(cats)
       setError(null)
-      setBatchResult(batch && batch.gateId !== dismissedGateIdRef.current ? batch : null)
+      await presentBatch(batch)
       // 待入账卡片要显示账户/分类/备注/审计：只对 confirm_record 事项取详情
       const ids = [
         ...new Set(
@@ -298,7 +316,7 @@ export function InboxProvider({ children }: { children: ReactNode }): ReactNode 
     } finally {
       setLoading(false)
     }
-  }, [reloadLocal])
+  }, [reloadLocal, presentBatch])
 
   useEffect(() => {
     void refresh()

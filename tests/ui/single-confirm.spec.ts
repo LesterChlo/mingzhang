@@ -93,11 +93,13 @@ test('工具失败详情默认折叠：中性摘要可见、实点展开才见�
     await page.getByTestId('panel-toggle').click()
     const before = await page.evaluate(() => window.mz.listLedger({limit:100}))
     // 只注入生产 IPC 事件来覆盖 renderer 的错误展示，不替换 mz 或请求真模型。
-    await app.evaluate(({BrowserWindow}) => {
+    await expect(page.getByTestId('panel-history-loading')).toHaveCount(0)
+    const snapshot = await page.evaluate(() => window.mz.getPanelHistory())
+    await app.evaluate(({BrowserWindow}, state) => {
       const win = BrowserWindow.getAllWindows()[0]
-      win.webContents.send('mz:chat-event', {type:'tool-start',payload:{toolName:'record'}})
-      win.webContents.send('mz:chat-event', {type:'tool-end',payload:{toolName:'record',isError:true,text:'合成错误详情：amount_cents 校验失败 SYN-ERROR-DETAIL'}})
-    })
+      win.webContents.send('mz:chat-event', {type:'tool-start',sessionId:state.sessionId,streamId:state.streamId,eventSeq:state.eventCursor+1,payload:{toolName:'record',toolCallId:'synthetic-failure'}})
+      win.webContents.send('mz:chat-event', {type:'tool-end',sessionId:state.sessionId,streamId:state.streamId,eventSeq:state.eventCursor+2,payload:{toolName:'record',toolCallId:'synthetic-failure',isError:true,text:'合成错误详情：amount_cents 校验失败 SYN-ERROR-DETAIL'}})
+    }, snapshot)
     const tool = page.locator('[data-testid="panel-tool"][data-status="error"]')
     await expect(tool).toHaveCount(1)
     await expect(tool).toContainText('这次尝试未成功，请以本轮最终结果为准。')

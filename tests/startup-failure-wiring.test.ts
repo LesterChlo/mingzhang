@@ -113,7 +113,12 @@ vi.mock('../src/main/config/store', () => ({
   },
   normalizeTheme: () => 'light',
 }))
-vi.mock('../src/main/db/connection', () => ({ openLedger: state.openLedger, initSchemaIfEmpty: state.initSchema }))
+vi.mock('../src/main/db/connection', () => ({
+  openLedger: state.openLedger,
+  initSchemaIfEmpty: state.initSchema,
+  // 新增只读预检接口沿用本用例的可读合成 DEK；事件/原错误/清理计数断言不变。
+  readStartupDek: () => 'ef'.repeat(32),
+}))
 vi.mock('../src/main/db/seed', () => ({ seed: state.seed }))
 vi.mock('../src/main/engine/engine', () => ({
   Engine: class {

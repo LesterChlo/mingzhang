@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { resolvePaths } from './paths'
 import { SecretsStore, migrateLegacyProviderKey } from './secrets/store'
 import { ConfigStore, normalizeTheme } from './config/store'
-import { openLedger, initSchemaIfEmpty } from './db/connection'
+import { openLedger, initSchemaIfEmpty, readStartupDek } from './db/connection'
 import { seed } from './db/seed'
 import { Engine } from './engine/engine'
 import { registerIpc } from './ipc'
@@ -100,6 +100,8 @@ if (!gotLock) {
     // 标题栏画成黑条，与浅色界面割裂（用户实测反馈）。themeSource 合法值 system|light|dark，
     // 与应用主题枚举同口径，直接透传；须在 createWindow 之前设好，首帧才是对的。
     nativeTheme.themeSource = normalizeTheme(config.load().theme)
+    // 恢复会删除/搬动工件；主题读取后、任何密钥迁移或恢复 mutation 前验证 DEK。
+    const startupDek = readStartupDek(paths.dbFile, secrets)
     // v1→v2 迁移落地 + 密钥按 provider 改名（安全序：set 新名 → 读回校验 → 才删旧名；失败保旧）
     {
       const migrated = config.load()
@@ -112,10 +114,7 @@ if (!gotLock) {
     // 崩溃窗口守门：openLedger 之前必须先完成中断恢复（恢复原库或候选），绝不静默新建空账本。
     // B1：只有启动恢复确认收敛后，才允许 openLedger；openLedger 已存在异常库直接拒绝。
     // 收敛后 openLedger 仍做生产 schema 校验；校验通过（新库为空则建表）后才 seed。
-    {
-      const dek = secrets.get('db.key')
-      recoverInterruptedRestore(paths.dbFile, dek ? { dekHex: dek } : undefined)
-    }
+    recoverInterruptedRestore(paths.dbFile, startupDek ? { dekHex: startupDek } : undefined)
     db = openLedger(paths.dbFile, secrets)
     // 收敛确认后才允许初始化：已存在库先完整校验；纯新库才建表/seed。
     initSchemaIfEmpty(db)
@@ -188,14 +187,26 @@ if (!gotLock) {
   }).catch(async (error: unknown) => {
     // 初始化失败只释放内存资源，不重建/删除任何账本、密钥或恢复现场。
     const engine = engines.tryGet()
+    const failedDb = db
     engines.set(null)
+    db = null // 等待清理前摘除两类失败资源，普通 IPC 与 before-quit 均不能再使用。
     try {
-      await engine?.dispose()
+      if (engine) {
+        let deadline: ReturnType<typeof setTimeout> | undefined
+        try {
+          // 未完成 HTTP 请求可令 dispose 永不 settle；失败出口最多等 750ms。
+          // race 始终监听 dispose 的晚 resolve/reject，不让迟到的失败成为 unhandled。
+          await Promise.race([
+            Promise.resolve().then(() => engine.dispose()),
+            new Promise<void>((resolve) => { deadline = setTimeout(resolve, 750) }),
+          ])
+        } finally {
+          if (deadline !== undefined) clearTimeout(deadline)
+        }
+      }
     } catch {
       // 清理失败不得替换原始启动原因，且数据库仍须独立尝试关闭。
     }
-    const failedDb = db
-    db = null
     try {
       failedDb?.close()
     } catch {

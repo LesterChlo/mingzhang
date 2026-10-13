@@ -46,139 +46,61 @@ function isSpaceCh(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v'
 }
 
-function isWordCh(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-}
-
-/** 从 i 处尝试匹配独立的 `IF NOT EXISTS`（大小写不敏感），返回结束下标或不匹配。 */
-function matchIfNotExists(sql: string, i: number): number | null {
-  const kw = sql.slice(i, i + 2)
-  if (kw.toLowerCase() !== 'if') return null
-  if (isWordCh(sql[i - 1]) || isWordCh(sql[i + 2])) return null
-  let j = i + 2
-  const skipWs = (): void => {
-    while (j < sql.length && isSpaceCh(sql[j])) j += 1
-  }
-  skipWs()
-  if (sql.slice(j, j + 3).toLowerCase() !== 'not') return null
-  if (isWordCh(sql[j - 1]) || isWordCh(sql[j + 3])) return null
-  j += 3
-  skipWs()
-  if (sql.slice(j, j + 6).toLowerCase() !== 'exists') return null
-  if (isWordCh(sql[j - 1]) || isWordCh(sql[j + 6])) return null
-  return j + 6
-}
-
-/**
- * 生产 DDL 归一化：契约侧与被检侧共用同一函数，保证口径一致。
- *
- * 第五轮裁定修复：原实现只做「折叠连续空白」，于是**纯排版差异**仍被判成漂移 ——
- *   `settings ( key` vs `settings(key`、`CHECK (x = 1)` vs `CHECK(x=1)`、换行/对齐空格。
- *   这些在 SQLite 语义上完全等价（schema.sql 与 sqlite_master 都原样保留排版），
- *   却让「同库重建、仅排版不同」的合法账本被 openLedger 拒启动。
- * 现在**字面量之外**的空白统一折叠，且紧贴 PUNCT_ADJACENT 标点的空白直接抹平。
- * 这类空白不承载任何语义，抹平它不可能掩盖真漂移：真漂移必然改动标识符或字面量本身，
- * 而标识符/字面量的差异在这里仍然逐字保留。
- *
- * 单趟扫描，字面量安全（关键约束）：
- *  - `'...'` 内部原样保留（含大小写与空白）—— `'x y'` 与 `'xy'` 语义不同，绝不能折叠；
- *  - 去注释（`--` / `/* *\/`）时不动字面量；
- *  - `IF NOT EXISTS` 关键字删除（沿用既有口径，两侧一致）。
- * 去注释必须在折叠空白之前：schema.sql 的列尾注释含换行，先折叠会让注释吞掉后半条 DDL。
+/** Compare lexical tokens, not stripped character runs: quotes and comments also
+ * separate identifiers from types. Literal bytes and quoted identifier interiors
+ * are opaque; complex identifiers retain canonical quotes to avoid token collisions.
  */
 export function normalizeSchemaDdl(sql: string): string {
-  const out: string[] = []
-  const n = sql.length
+  const tokens: { text: string; punct: boolean; bare: boolean }[] = []
   let i = 0
-  /** 见到下一个实字符时才决定是否补一个空格（折叠）。 */
-  let pendingSpace = false
-  const pushWord = (text: string): void => {
-    if (text === '') return
-    const last = out[out.length - 1]
-    if (pendingSpace && out.length > 0 && last !== undefined && !PUNCT_ADJACENT.test(last)) {
-      out.push(' ')
-    }
-    pendingSpace = false
-    out.push(text)
-  }
-  while (i < n) {
+  while (i < sql.length) {
     const ch = sql[i]
-    // 注释（字面量之外）
+    if (isSpaceCh(ch)) { i++; continue }
     if (ch === '-' && sql[i + 1] === '-') {
-      while (i < n && sql[i] !== '\n') i += 1
+      while (i < sql.length && sql[i] !== '\n') i++
       continue
     }
     if (ch === '/' && sql[i + 1] === '*') {
       i += 2
-      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1
-      i = Math.min(n, i + 2)
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
+      i = Math.min(sql.length, i + 2)
       continue
     }
-    // 字符串字面量：整体原样保留（内部空白/大小写是数据）
-    if (ch === "'") {
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2
-            continue
-          }
-          j += 1
-          break
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      const start = i++, close = ch === '[' ? ']' : ch
+      let content = '', closed = false
+      while (i < sql.length) {
+        if (sql[i] === close) {
+          if (ch !== '[' && sql[i + 1] === close) { content += close; i += 2; continue }
+          i++; closed = true; break
         }
-        j += 1
+        content += sql[i++]
       }
-      pushWord(sql.slice(i, j))
-      i = j
+      const name = content.toLowerCase()
+      const text = ch === "'" || !closed ? sql.slice(start, i) :
+        /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
+      tokens.push({ text, punct: false, bare: false })
       continue
     }
-    // 标识符引号：只删包裹引号，保留被引标识符本身
-    if (ch === '"' || ch === '`') {
-      i += sql[i + 1] === ch ? 2 : 1
-      continue
-    }
-    if (ch === '[') {
-      const close = sql.indexOf(']', i + 1)
-      // 方括号只是标识符定界符；内容必须保留，否则列名/CHECK 操作数会被吞掉。
-      pushWord(sql.slice(i + 1, close === -1 ? n : close).toLowerCase())
-      i = close === -1 ? n : close + 1
-      continue
-    }
-    // 空白：折叠为一个待定空格
-    if (isSpaceCh(ch)) {
-      pendingSpace = true
-      i += 1
-      continue
-    }
-    // IF NOT EXISTS：删除关键字
-    const ifEnd = matchIfNotExists(sql, i)
-    if (ifEnd !== null) {
-      pendingSpace = true
-      i = ifEnd
-      continue
-    }
-    // 标点/运算符：两侧不留空白
     if (PUNCT_ADJACENT.test(ch)) {
-      pendingSpace = false
-      out.push(ch)
-      i += 1
-      continue
+      tokens.push({ text: ch, punct: true, bare: false }); i++; continue
     }
-    // 标识符 / 数字 / 其它：按整词推进（逐字也可，但整词更易读）
-    let j = i
-    while (
-      j < n &&
-      !isSpaceCh(sql[j]) &&
-      !PUNCT_ADJACENT.test(sql[j]) &&
-      sql[j] !== "'" &&
-      sql[j] !== '"' &&
-      sql[j] !== '`' &&
-      sql[j] !== '['
-    ) {
-      j += 1
-    }
-    pushWord(sql.slice(i, j).toLowerCase())
-    i = j
+    const start = i++
+    while (i < sql.length && !isSpaceCh(sql[i]) && !PUNCT_ADJACENT.test(sql[i]) &&
+      !["'", '"', '`', '['].includes(sql[i])) i++
+    tokens.push({ text: sql.slice(start, i).toLowerCase(), punct: false, bare: true })
+  }
+  const out: string[] = []
+  let lastPunct = true
+  for (let t = 0; t < tokens.length; t++) {
+    // Only unquoted keyword tokens; comment boundaries cannot fuse IF/NOT/EXISTS.
+    if (tokens[t].bare && tokens[t].text === 'if' &&
+      tokens[t + 1]?.bare && tokens[t + 1].text === 'not' &&
+      tokens[t + 2]?.bare && tokens[t + 2].text === 'exists') { t += 2; continue }
+    const token = tokens[t]
+    if (!lastPunct && !token.punct) out.push(' ')
+    out.push(token.text)
+    lastPunct = token.punct
   }
   return out.join('')
 }

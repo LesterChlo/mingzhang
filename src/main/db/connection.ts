@@ -10,7 +10,8 @@ import { randomBytes } from 'node:crypto'
 import type { SecretsStore } from '../secrets/store'
 import schemaSql from './schema.sql?raw'
 import { runMigrations } from './migrations'
-import { validateLedgerDatabase, listPendingRestoreArtifacts } from '../domain/backup'
+import { validateLedgerDatabase, listPendingRestoreArtifacts, getProductionSchemaContract } from '../domain/backup'
+import { installResultShape } from './result-shape'
 
 export { schemaSql }
 
@@ -94,6 +95,9 @@ export function openLedger(dbFile: string, secrets: SecretsStore): Database {
       // 绝不由启动流程 initSchema 补成看似正常的新空账本。
       validateLedgerDatabase(db, '账本')
     }
+    // Schema-equivalent uppercase columns must expose the canonical application row contract.
+    // Validation/backup/migration scratch connections stay native; no DDL or data is rewritten.
+    installResultShape(db, getProductionSchemaContract().columns)
     return db
   } catch (err) {
     // 任何拒启路径都必须归还原生句柄。

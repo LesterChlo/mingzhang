@@ -14,6 +14,7 @@ import { registerSettingsIpc } from './ipc-settings'
 import { autoSnapshotIfNeeded, sweepPlainResidues, recoverInterruptedRestore } from './domain/backup'
 import { createEngineRegistry } from './engine/registry'
 import { globalRestoreGate } from './domain/restore-gate'
+import { showStartupFailure } from './startup-failure'
 import type { ChatEvent } from '../shared/types'
 
 app.setName('mingzhang')
@@ -66,6 +67,7 @@ function createWindow(): void {
       sandbox: false,
     },
   })
+  const createdWindow = win
 
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -73,7 +75,7 @@ function createWindow(): void {
     win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
   win.on('closed', () => {
-    win = null
+    if (win === createdWindow) win = null
   })
 }
 
@@ -183,6 +185,30 @@ if (!gotLock) {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
+  }).catch(async (error: unknown) => {
+    // 初始化失败只释放内存资源，不重建/删除任何账本、密钥或恢复现场。
+    const engine = engines.tryGet()
+    engines.set(null)
+    try {
+      await engine?.dispose()
+    } catch {
+      // 清理失败不得替换原始启动原因，且数据库仍须独立尝试关闭。
+    }
+    const failedDb = db
+    db = null
+    try {
+      failedDb?.close()
+    } catch {
+      // 关闭失败同样保留原始原因；退出时不再重复使用失败的连接。
+    }
+    // 先建立错误窗，再销毁可能已创建的主窗，避免 window-all-closed 提前退出。
+    const failedWindow = win
+    const failure = showStartupFailure(error, paths?.dataDir ?? null)
+    win = failure
+    failure.on('closed', () => {
+      if (win === failure) win = null
+    })
+    if (failedWindow && !failedWindow.isDestroyed()) failedWindow.destroy()
   })
 
   app.on('window-all-closed', () => {

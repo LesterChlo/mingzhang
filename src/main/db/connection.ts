@@ -22,6 +22,13 @@ const SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal']
 export function loadOrCreateDek(secrets: SecretsStore): string {
   const existing = secrets.get(DB_KEY_FILE)
   if (existing) return existing
+  // get(null) 也可能是解密失败；只有能够确认密钥文件不存在，才允许生成。
+  if (typeof secrets.has !== 'function') {
+    throw new Error('无法确认账本密钥是否已存在：拒绝生成新密钥，请保留原密钥并检查安全存储。')
+  }
+  if (secrets.has(DB_KEY_FILE)) {
+    throw new Error('账本密钥文件已存在但无法读取：拒绝覆盖原密钥，请保留账本与密钥并检查原机器、账户或安全存储。')
+  }
   const dek = randomBytes(32).toString('hex')
   secrets.set(DB_KEY_FILE, dek)
   return dek
@@ -69,7 +76,11 @@ export function openLedger(dbFile: string, secrets: SecretsStore): Database {
       throw new Error('已存在的账本文件为空或不是普通文件：拒绝启动（绝不补成新空账本，请人工核对）。')
     }
   }
-  const dek = loadOrCreateDek(secrets)
+  // 既有账本绝不补钥；缺钥/解密失败必须在打开 SQLite（含 sidecar 写入）之前拒绝。
+  const dek = existed ? secrets.get(DB_KEY_FILE) : loadOrCreateDek(secrets)
+  if (!dek) {
+    throw new Error('已存在账本的密钥缺失或无法读取：拒绝生成新密钥，请保留原账本与密钥并检查原机器、账户或安全存储。')
+  }
   const db = new DatabaseCtor(dbFile)
   try {
     // 打开/解密探测。note: 损坏或非数据库文件上 **PRAGMA 本身就会先抛**

@@ -473,81 +473,83 @@ export function undoClassify(db: Database, classifyId: string): ClassifyUndoResu
   const result: ClassifyUndoResultDTO = { classifyId, revertedCount: 0, skipped: [] }
   if (!classifyId) return result
 
-  const txIds = (
-    db
-      .prepare(
-        "SELECT DISTINCT entity_id AS txId FROM audit_log WHERE entity_type='transaction' AND source_message_id = ? ORDER BY entity_id",
-      )
-      .all(classifyId) as { txId: number }[]
-  ).map((r) => r.txId)
+  db.transaction((): void => {
+    const txIds = (
+      db
+        .prepare(
+          "SELECT DISTINCT entity_id AS txId FROM audit_log WHERE entity_type='transaction' AND source_message_id = ? ORDER BY entity_id",
+        )
+        .all(classifyId) as { txId: number }[]
+    ).map((r) => r.txId)
 
-  for (const txId of txIds) {
-    const latest = db
-      .prepare("SELECT id, entity_id, change_type, before_value, source_message_id FROM audit_log WHERE entity_type='transaction' AND entity_id=? ORDER BY id DESC LIMIT 1")
-      .get(txId) as AuditRow | undefined
-    if (!latest) {
-      result.skipped.push({ txId, reason: '找不到审计记录' })
-      continue
-    }
-    if (latest.source_message_id !== classifyId) {
-      result.skipped.push({ txId, reason: '这之后被改过，未撤销' })
-      continue
-    }
-    // 该笔本次归类产生的最早一条审计 → before_value 即归类前的样子
-    const first = db
-      .prepare("SELECT id, entity_id, change_type, before_value, source_message_id FROM audit_log WHERE entity_type='transaction' AND entity_id=? AND source_message_id=? ORDER BY id ASC LIMIT 1")
-      .get(txId, classifyId) as AuditRow | undefined
-    if (!first) {
-      result.skipped.push({ txId, reason: '找不到本次归类的审计' })
-      continue
-    }
-    // 已经是撤销态（回退后又被同一次 classify 撤销过）→ 幂等跳过
-    let before: Partial<TxSnapshot> | null = null
-    try {
-      before = JSON.parse(first.before_value ?? '') as Partial<TxSnapshot> | null
-    } catch {
-      before = null
-    }
-    const targetState = before?.state ?? 'needs_review'
-    const targetCategory = before?.category_id ?? null
-    const tx = getTransaction(db, txId)
-    if (!tx) {
-      result.skipped.push({ txId, reason: `#${txId} 不存在` })
-      continue
-    }
-    if (tx.state === targetState && (tx.category_id ?? null) === targetCategory) {
-      result.skipped.push({ txId, reason: '已撤销过，无需重复' })
-      continue
-    }
-    const beforeSnap = snapshot(db, txId)
-    db.prepare('UPDATE transactions SET state=?, category_id=?, updated_at=? WHERE id=?').run(
-      targetState,
-      targetCategory,
-      nowIso(),
-      txId,
-    )
-    writeAudit(db, {
-      entity_type: 'transaction',
-      entity_id: txId,
-      changed_by: 'user',
-      change_type: 'update',
-      before_value: beforeSnap,
-      after_value: snapshot(db, txId),
-      source_message_id: classifyId,
-      reasoning: '撤销批量归类',
-    })
-    // 重建待办：回到 needs_review 就得重新有一件"待分类"的事
-    if (targetState === 'needs_review' && !findOpenByTxAndField(db, txId, 'confirm_record')) {
-      requestReview(db, txId, { reason: '撤销批量归类', sourceMessageId: classifyId })
-      createPending(db, {
+    for (const txId of txIds) {
+      const latest = db
+        .prepare("SELECT id, entity_id, change_type, before_value, source_message_id FROM audit_log WHERE entity_type='transaction' AND entity_id=? ORDER BY id DESC LIMIT 1")
+        .get(txId) as AuditRow | undefined
+      if (!latest) {
+        result.skipped.push({ txId, reason: '找不到审计记录' })
+        continue
+      }
+      if (latest.source_message_id !== classifyId) {
+        result.skipped.push({ txId, reason: '这之后被改过，未撤销' })
+        continue
+      }
+      // 该笔本次归类产生的最早一条审计 → before_value 即归类前的样子
+      const first = db
+        .prepare("SELECT id, entity_id, change_type, before_value, source_message_id FROM audit_log WHERE entity_type='transaction' AND entity_id=? AND source_message_id=? ORDER BY id ASC LIMIT 1")
+        .get(txId, classifyId) as AuditRow | undefined
+      if (!first) {
+        result.skipped.push({ txId, reason: '找不到本次归类的审计' })
+        continue
+      }
+      // 已经是撤销态（回退后又被同一次 classify 撤销过）→ 幂等跳过
+      let before: Partial<TxSnapshot> | null = null
+      try {
+        before = JSON.parse(first.before_value ?? '') as Partial<TxSnapshot> | null
+      } catch {
+        before = null
+      }
+      const targetState = before?.state ?? 'needs_review'
+      const targetCategory = before?.category_id ?? null
+      const tx = getTransaction(db, txId)
+      if (!tx) {
+        result.skipped.push({ txId, reason: `#${txId} 不存在` })
+        continue
+      }
+      if (tx.state === targetState && (tx.category_id ?? null) === targetCategory) {
+        result.skipped.push({ txId, reason: '已撤销过，无需重复' })
+        continue
+      }
+      const beforeSnap = snapshot(db, txId)
+      db.prepare('UPDATE transactions SET state=?, category_id=?, updated_at=? WHERE id=?').run(
+        targetState,
+        targetCategory,
+        nowIso(),
         txId,
-        sessionId: 'undo',
-        field: 'confirm_record',
-        question: '批量归类已撤销，待重新分类',
-        payload: { txId, reason: '撤销批量归类' },
+      )
+      writeAudit(db, {
+        entity_type: 'transaction',
+        entity_id: txId,
+        changed_by: 'user',
+        change_type: 'update',
+        before_value: beforeSnap,
+        after_value: snapshot(db, txId),
+        source_message_id: classifyId,
+        reasoning: '撤销批量归类',
       })
+      // 重建待办：回到 needs_review 就得重新有一件"待分类"的事
+      if (targetState === 'needs_review' && !findOpenByTxAndField(db, txId, 'confirm_record')) {
+        requestReview(db, txId, { reason: '撤销批量归类', sourceMessageId: classifyId })
+        createPending(db, {
+          txId,
+          sessionId: 'undo',
+          field: 'confirm_record',
+          question: '批量归类已撤销，待重新分类',
+          payload: { txId, reason: '撤销批量归类' },
+        })
+      }
+      result.revertedCount += 1
     }
-    result.revertedCount += 1
-  }
+  })()
   return result
 }

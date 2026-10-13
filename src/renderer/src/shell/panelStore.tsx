@@ -158,6 +158,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
   const gateEpoch = useRef(0)
   const failureNoticeId = useRef<number | null>(null)
   const localSendNoticeId = useRef<number | null>(null)
+  const pendingSendReplyId = useRef<number | null>(null)
   const showFailure = useCallback((id: number, text: string) => {
     setItems(previous => {
       const index = previous.findIndex(item => item.id === id && item.kind === 'notice')
@@ -289,6 +290,7 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
       resolvedPlans.current.clear()
       failureNoticeId.current = null
       localSendNoticeId.current = null
+      pendingSendReplyId.current = null
       thinkIdRef.current = null
       setBusyBoth(false)
     }
@@ -424,14 +426,25 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
         }
         identity = { sessionId: snapshot.sessionId, streamId: snapshot.streamId }
         if (!snapshot.busy) {
+          // 游标已覆盖本地发送的真实回显时，快照里已有该条消息；不能再留乐观副本。
+          const localEchoIncluded = localSendNoticeId.current !== null && buffered.some(event =>
+            event.type === 'user-message' && event.sessionId === snapshot.sessionId && event.streamId === snapshot.streamId
+            && typeof event.eventSeq === 'number' && event.eventSeq <= snapshot.eventCursor,
+          )
+          if (localEchoIncluded) localSendNoticeId.current = null
+          const awaitingLocalEcho = localSendNoticeId.current !== null
           const recovered = panelItemsFromHistory(snapshot.messages)
           setItems(previous => {
-            const optimistic = previous.filter(item => item.kind === 'user' && item.pending)
+            const optimistic = awaitingLocalEcho ? previous.filter(item => item.kind === 'user' && item.pending) : []
             const thinking = optimistic.length ? previous.filter(item => item.kind === 'thinking' && item.running) : []
             return [...recovered, ...thinking, ...optimistic]
           })
           cursor = snapshot.eventCursor
-          if (!busyRef.current || !thinkIdRef.current) {
+          // idle快照负责收口游标前的轮；只有尚未被主进程回显的本地发送继续等待。
+          // 游标后的真实新轮仍由下面的事件重放推进，不取消去重或重新请求模型。
+          if (!awaitingLocalEcho) {
+            // 完整快照已接管这轮；迟到 invoke 不再重复失败回执或结束之后的新轮。
+            pendingSendReplyId.current = null
             thinkIdRef.current = null
             setBusyBoth(false)
           }
@@ -499,16 +512,19 @@ export function PanelProvider({ children }: { children: ReactNode }): ReactNode 
       const noticeId = nextId()
       localSendNoticeId.current = noticeId
       failureNoticeId.current = noticeId
+      pendingSendReplyId.current = noticeId
       beginTurn()
       pushUserLocal(t)
       try {
         await window.mz.sendChat(t, [])
-        if (sessionEpoch !== gateEpoch.current) return
+        if (sessionEpoch !== gateEpoch.current || pendingSendReplyId.current !== noticeId) return
+        pendingSendReplyId.current = null
         // sendChat 的 promise 在整轮结束时 resolve——与 turn-end / agent-end 三重保险收尾，
         // 免得引擎哪天少发一个事件就把输入框永久锁死
         endTurn()
       } catch (e) {
-        if (sessionEpoch !== gateEpoch.current) return
+        if (sessionEpoch !== gateEpoch.current || pendingSendReplyId.current !== noticeId) return
+        pendingSendReplyId.current = null
         // IPC reject 与事件可能以任一顺序到达，同一发送用同一ID回填。
         showFailure(noticeId, `没发出去：${String(e)}`)
         endTurn()

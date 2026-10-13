@@ -224,7 +224,30 @@ export class Engine {
       authPath: join(this.paths.piDir, 'auth.json'),
       modelsPath: modelsJsonPath,
       modelsStorePath: join(this.paths.piDir, 'models-store.json'),
+      refreshOnCreate: false,
     })
+
+    // 应用预设只接受显式运行时密钥，不继承同名内置供应商的环境/OAuth/文件认证。
+    // 保留 SDK 已装配的模型与传输；缺钥仍可启动，让真实 preflight 拒绝并保全失败历史。
+    const provider = modelRuntime.getProvider(pid)
+    if (provider) {
+      modelRuntime.registerNativeProvider({
+        ...provider,
+        auth: {
+          apiKey: {
+            name: provider.auth.apiKey?.name ?? 'API key',
+            check: async ({ credential }) => credential?.key
+              ? { type: 'api_key', source: 'application credential' }
+              : undefined,
+            resolve: async ({ credential }) => credential?.key
+              ? { auth: { apiKey: credential.key }, source: 'application credential' }
+              : undefined,
+          },
+        },
+      })
+      // register 会异步刷新；明确等待当前预设的快照，且不允许模型目录触网。
+      await modelRuntime.refresh({ allowNetwork: false, providers: [pid] })
+    }
 
     // 密钥按 provider 分存（决定记录 §4 多预设修订）：provider-key:<id>
     const apiKey = (mock ? 'mock-key' : null) ?? this.secrets.get(`provider-key:${pid}`)

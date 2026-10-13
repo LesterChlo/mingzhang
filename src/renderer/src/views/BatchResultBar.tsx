@@ -7,8 +7,8 @@
 //   ① 全部文案是确定性模板句，一个字都不调模型（事实层不给措辞层让位）；
 //   ② 四段计数**不是分区**：待分类含在已入账里，所以必须有一行小字说清（br-subset-note），
 //      否则用户会拿 126+38 算不平、以为界面在骗人；
-//   ③ 后端给不出来的明细就**说出来**：不计收支的逐行明细本单没有（D-03b），
-//      写「逐行明细待后端」，绝不拿空数组冒充「没有不计收支的行」；
+//   ③ 明细来自本批确认门持久化的来源快照；旧批未保存则明确说明，
+//      绝不拿空数组冒充「没有不计收支的行」；
 //   ④ 依赖未实现单子的按钮一律不渲染（对话面板 P 组 / 批量写 D-01 / 思考全文 D-02 /
 //      跨重启持久化 D-04）——不放假按钮。
 //
@@ -18,11 +18,31 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type { BatchResultSummaryDTO } from '../../../shared/types'
 import { money } from '../lib/shellFormat'
+import './batch-excluded.css'
 
 export interface BatchResultBarProps {
   summary: BatchResultSummaryDTO
   /** ✕ 关闭：本单仅内存态（持久化 = D-04）。 */
   onDismiss: () => void
+}
+
+type ExcludedRow = {
+  tableId: number; rowNo: number; sourceText: string; merchant: string | null
+  amountCents: number | null; occurredAt: string | null; reason: string
+}
+
+/** 展示持久化来源快照；缺少旧明细不反算，也不冒充零行。 */
+export function ExcludedRows({ rows, count }: { rows: ExcludedRow[] | null; count: number }): ReactElement {
+  if (rows === null) return <p className="mz-br-empty" data-testid="br-excluded-legacy">共 {count} 行按方案不计收支；旧导入未保存逐行明细，不能逐行核对。</p>
+  if (rows.length !== count) return <p className="mz-br-empty" role="alert">本批明细不完整，不能与 {count} 行的排除计数核对。</p>
+  if (rows.length === 0) return <p className="mz-br-empty">这一批没有不计收支的行</p>
+  return <div className="mz-excluded-list" data-testid="br-excluded-list" tabIndex={0} aria-label="不计收支来源明细">
+    {rows.map(r => <article className="mz-excluded-row" data-testid="br-excluded-row" key={`${r.tableId}:${r.rowNo}`}>
+      <div className="mz-excluded-line"><span className="mz-excluded-source">第 {r.rowNo} 行</span><strong>{r.merchant ?? '未命名来源'}</strong><span className="mz-excluded-amount">{r.amountCents === null ? '金额未能解析' : money(r.amountCents)}</span></div>
+      <div className="mz-excluded-meta"><time>{r.occurredAt ?? '日期未能解析'}</time><span>{r.reason}</span></div>
+      <details className="mz-excluded-original"><summary>查看来源原文</summary><p>{r.sourceText || '来源行为空'}</p></details>
+    </article>)}
+  </div>
 }
 
 export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): ReactElement {
@@ -125,7 +145,7 @@ export function BatchResultBar({ summary, onDismiss }: BatchResultBarProps): Rea
         </button>
         {exOpen && (
           <div className="mz-br-rows" data-testid="br-excluded-note">
-            <div className="mz-br-row">共 {excluded} 行按方案不计收支；逐行明细待后端</div>
+            <ExcludedRows rows={summary.excludedRows} count={excluded} />
             {/* 「全部恢复为正常收支」依赖 D-01（批量写工具），本单未实现 → 不渲染 */}
           </div>
         )}

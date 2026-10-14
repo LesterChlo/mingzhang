@@ -22,7 +22,7 @@ interface TodaySummary {
   rows: { text: string; cents: number }[]
 }
 
-export function InboxView({ onGoReport }: { onGoReport?: () => void }): ReactElement {
+export function InboxView({ onGoReport, onOpenSettings }: { onGoReport?: () => void; onOpenSettings: (tab: 'storage' | 'billing') => void }): ReactElement {
   const {
     items,
     pendingCount,
@@ -207,7 +207,7 @@ export function InboxView({ onGoReport }: { onGoReport?: () => void }): ReactEle
         )}
       </section>
 
-      <InboxAside agg={agg} month={month} lastReport={lastReport} reportError={reportError} />
+      <InboxAside agg={agg} month={month} lastReport={lastReport} reportError={reportError} onOpenSettings={onOpenSettings} />
     </div>
   )
 }

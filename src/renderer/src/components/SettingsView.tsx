@@ -18,6 +18,7 @@ interface Props {
   onEditProvider: (id: string) => void
   /** C4②：续接一条归档会话成功后回调（切回对话并刷新历史）。 */
   onContinueSession?: () => void
+  initialTab?: 'model' | 'billing' | 'storage'
 }
 
 function SnapshotList({ onRestored }: { onRestored: () => void }) {
@@ -54,7 +55,7 @@ function SnapshotList({ onRestored }: { onRestored: () => void }) {
   )
 }
 
-export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvider, onContinueSession }: Props) {
+export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvider, onContinueSession, initialTab = 'model' }: Props) {
   const [info, setInfo] = useState<SettingsInfoDTO | null>(null)
   const [budgetYuan, setBudgetYuan] = useState('')
   const [budgetSaved, setBudgetSaved] = useState(false)
@@ -65,7 +66,7 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
   const [busy, setBusy] = useState(false)
   // 第 7 单 段3：设置页分 3 个子分类（只归组，不删改任何 section 功能）；默认「模型服务」。
   const [rulesOpen, setRulesOpen] = useState(false)
-  const [tab, setTab] = useState<'model' | 'billing' | 'storage'>('model')
+  const [tab, setTab] = useState<'model' | 'billing' | 'storage'>(initialTab)
 
   function reloadInfo(): void {
     window.mz.getSettingsInfo().then((i) => {

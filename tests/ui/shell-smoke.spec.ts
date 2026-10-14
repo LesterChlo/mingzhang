@@ -426,12 +426,13 @@ test.describe('收件箱（真实数据）', () => {
     await expect(page.getByTestId('report-view')).toBeVisible()
     await page.getByTestId('nav-inbox').click()
 
-    // 右栏三卡即使空态也在（本地数据 / 本月速览 / AI 记忆）
-    await expect(page.getByTestId('aside-local')).toBeVisible()
+    // Issue31 approved relocation: no placeholder/detail card; real summary and settings links remain.
+    await expect(page.getByTestId('aside-local')).toHaveCount(0)
     await expect(page.getByTestId('aside-report')).toBeVisible()
-    await expect(page.getByTestId('aside-memory')).toBeVisible()
-    // AI 记忆：后端无此通道，如实占位，绝不编数字
-    await expect(page.getByTestId('aside-memory')).toContainText('待后端支持')
+    await expect(page.getByTestId('aside-memory')).toHaveCount(0)
+    await expect(page.getByTestId('aside-security')).toHaveCount(1)
+    await expect(page.getByTestId('aside-data-settings')).toHaveCount(1)
+    await expect(page.getByTestId('aside-backup-settings')).toHaveCount(1)
   })
 
   test('收件箱② 速记行可输入：回车提交 → 出现待决卡（含依据行与逐行明细）', async () => {

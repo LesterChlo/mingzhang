@@ -56,6 +56,7 @@ export function AppShell({ state, reload, onAddProvider, onEditProvider, onConti
 
 function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSession }: AppShellProps): ReactElement {
   const [view, setView] = useState<AppShellView>('inbox')
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'model' | 'billing' | 'storage'>('model')
   const [theme, setTheme] = useState<ShellTheme>(() => state.theme)
   // 账本屏的初始筛选：结果条主按钮带 needs_review 跳过来时用它（走完即失效，见 onGoLedger）。
   // 只进一个筛选条件，账本屏自己的筛选条仍是唯一的筛选入口。
@@ -99,7 +100,7 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
         theme={theme}
         dataDir={state.dataDir}
         lastSnapshotMtime={lastSnapshot}
-        onSelect={setView}
+        onSelect={(next) => { if (next === 'settings') setSettingsInitialTab('model'); setView(next) }}
         onToggleTheme={toggleTheme}
       />
 
@@ -109,7 +110,7 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
 
         <div className="mz-view" key={view}>
           {view === 'inbox' && (
-            <InboxView onGoReport={() => setView('report')} />
+            <InboxView onGoReport={() => setView('report')} onOpenSettings={(tab) => { setSettingsInitialTab(tab); setView('settings') }} />
           )}
           {view === 'ledger' && <LedgerView initialFilter={ledgerInitialFilter} />}
           {view === 'report' && (
@@ -125,6 +126,7 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
           {view === 'accounts' && <AccountsView />}
           {view === 'settings' && (
             <SettingsRoute
+              initialTab={settingsInitialTab}
               state={state}
               reload={reload}
               onDone={() => setView('inbox')}

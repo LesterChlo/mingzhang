@@ -36,6 +36,7 @@ import {
 import { buildCard, txOf } from '../domain/cards'
 import { findOpenByTxAndField, closePending } from '../domain/pending'
 import { executeDeleteGate, cancelGate as cancelGateInDb } from '../domain/gates'
+import { executeTransactionSplit } from '../domain/transaction-actions'
 import { executeBatch, batchFollowUpSummary } from '../domain/batch'
 import { applyClassify } from '../domain/classify'
 import { getPending } from '../domain/pending'
@@ -43,7 +44,7 @@ import { startupReportCheck, type MonthReport } from '../domain/reports'
 import { nowIso } from '../db/time'
 import { startMockServer, type MockServer } from '../mock/server'
 import { join as joinPath } from 'node:path'
-import type { ChatEvent, ExecResult, TransactionCardData, TxEditOp } from '../../shared/types'
+import type { ChatEvent, ExecResult, SplitCardData, TransactionCardData, TransactionSplitResultDTO, TxEditOp } from '../../shared/types'
 
 export type Broadcaster = (evt: ChatEvent) => void
 
@@ -606,12 +607,12 @@ export class Engine {
   }
 
   /** 删除/批次确认门执行（仅 UI 按钮调用）。返回语义化 ExecResult。 */
-  async confirmGate(gateId: number): Promise<ExecResult> {
+  async confirmGate(gateId: number, expectedVersion?: string): Promise<ExecResult> {
     const key = `gate:${gateId}`
     if (this.confirming.has(key)) return { status: 'in_flight', message: '这道确认正在处理，请稍候…' }
     this.confirming.add(key)
     try {
-      return await this.doConfirmGate(gateId)
+      return await this.doConfirmGate(gateId, expectedVersion)
     } catch (e) {
       return { status: 'error', message: `执行失败：${(e as Error).message}` }
     } finally {
@@ -619,9 +620,26 @@ export class Engine {
     }
   }
 
-  private async doConfirmGate(gateId: number): Promise<ExecResult> {
+  private async doConfirmGate(gateId: number, expectedVersion?: string): Promise<ExecResult> {
     const gateRow = getPending(this.db, gateId)
     if (!gateRow) return { status: 'not_found', message: `确认门 #${gateId} 不存在` }
+    if (gateRow.field === 'split_confirm') {
+      if (gateRow.status !== 'open') return { status: 'already_closed', message: '这道拆账确认门已处理过，无需重复。' }
+      if (typeof expectedVersion !== 'string' || !expectedVersion) return { status: 'error', message: '缺少拆账预览版本，请刷新后重新确认。' }
+      const result: TransactionSplitResultDTO = executeTransactionSplit(this.db, { gateId, expectedVersion }, { via: 'panel' })
+      const card: SplitCardData = {
+        kind: 'split',
+        originalId: result.originalId,
+        cards: result.childIds.map((txId) => buildCard(this.db, txOf(this.db, txId))),
+      }
+      this.broadcast({ type: 'gate-executed', payload: { kind: 'split', gateId, result, card } })
+      try {
+        await this.session?.followUp(`系统通知：用户已在界面确认拆账，原交易 #${result.originalId} 已由 ${result.childIds.length} 个子项替代。请用一句话知会用户。`)
+      } catch {
+        // 事实已由事务提交；模型知会失败不回滚用户操作。
+      }
+      return { status: 'ok', message: `已拆账 #${result.originalId}，生成 ${result.childIds.map((id) => `#${id}`).join('、')}` }
+    }
     if (gateRow.field === 'batch_confirm') {
       const result = executeBatch(this.db, gateId)
       if (!result) return { status: 'already_closed', message: '这道批次确认门已处理过（已入账或已取消），无需重复。' }

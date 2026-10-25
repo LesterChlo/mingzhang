@@ -7,7 +7,7 @@
 //           删除 / 恢复        → editTx { op:'delete' | 'restore' }
 //   禁用（后端不支持，标明原因，不做假按钮）：
 //           改日期 / 改类型（editTx set 只接受 分类/金额/说明/备注/账户）
-//           拆账 / 标记不计收支（后端无对应通道，规格 §6）
+//   拆账 / 标记不计收支：本单接入带版本校验的 TransactionActions 确认入口。
 //   附件：txDetail().attachmentRef → readAttachment() 取缩略图；多附件管理（+ 添加照片 / 单张删除）
 //         后端只存「来源附件」单张，故如实标待后端。
 
@@ -17,6 +17,7 @@ import type { AccountOption, TxDetailDTO, TxEditOp } from '../../../shared/types
 import { useInbox } from '../shell/inboxStore'
 import { STATE_LABELS, humanError, money, stateTone } from '../lib/ledgerFilter'
 import { txTypeLabel } from '../lib/shellFormat'
+import { TransactionActions } from './TransactionActions'
 
 const CLIP_ICON = (
   <svg
@@ -38,8 +39,7 @@ const CLIP_ICON = (
 const BACKEND_GAPS: { id: string; label: string; reason: string }[] = [
   { id: 'date', label: '改日期', reason: 'editTx {op:set} 只接受 分类 / 金额 / 说明 / 备注 / 账户 五个字段，日期不在其中' },
   { id: 'type', label: '改类型', reason: '同上：交易类型（支出/收入/转账）无写入通道' },
-  { id: 'split', label: '拆账', reason: '拆账需要新的域层通道（规格 §6 未提供），本单不改后端' },
-  { id: 'adjust', label: '标记不计收支', reason: '标记不计收支（adjustment）无写入通道，本单不改后端' },
+
 ]
 
 export function LedgerDetail({
@@ -429,7 +429,9 @@ export function LedgerDetail({
         规格 §3.2 的「送入收件箱待确认」路径待后端（AI 发起的删除仍走确认门：收件箱可见删除确认卡）。
       </div>
 
-      {/* 待后端禁用区：四个字段/动作，原因逐条可见 */}
+      <TransactionActions txId={txId} onChanged={() => { void load(); onChanged() }} onNotice={onNotice} />
+
+      {/* 日期与类型仍是独立缺口；本单不复制其他未合 PR 的实现。 */}
       <div className="mz-todo-list" data-testid="ledger-backend-todo">
         <div className="mz-panel-title">待后端（后端无通道，按钮禁用）</div>
         <div className="mz-actions">

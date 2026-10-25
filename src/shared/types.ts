@@ -129,6 +129,55 @@ export interface SplitCardData {
   cards: TransactionCardData[]
 }
 
+export interface TransactionActionsDTO {
+  txId: number
+  version: string
+  txType: 'expense' | 'income' | 'transfer' | 'adjustment'
+  state: string
+  amountCents: number
+  canSplit: boolean
+  canExclude: boolean
+  excluded: boolean
+  openSplitGateId: number | null
+  undoSplit: { gateId: number; version: string; originalId: number; canUndo: boolean; reason: string | null } | null
+  reason: string | null
+}
+
+export interface TransactionSplitItemInput {
+  amountCents: number
+  categoryId?: number
+  merchant?: string | null
+  note?: string | null
+}
+
+export interface TransactionSplitItemDTO {
+  amountCents: number
+  categoryId: number
+  categoryName: string
+  merchant: string | null
+  note: string | null
+}
+
+export interface TransactionSplitPlanDTO {
+  gateId: number
+  version: string
+  original: TransactionCardData['tx']
+  items: TransactionSplitItemDTO[]
+  totalCents: number
+}
+
+export interface TransactionSplitResultDTO {
+  gateId: number
+  originalId: number
+  childIds: number[]
+  version: string
+}
+
+export interface SplitGateCardData {
+  kind: 'split-gate'
+  plan: TransactionSplitPlanDTO
+}
+
 export interface ReportCardData {
   kind: 'report'
   month: string
@@ -328,6 +377,7 @@ export type CardData =
   | DeleteGateCardData
   | RuleCardData
   | SplitCardData
+  | SplitGateCardData
   | ReportCardData
   | BatchGateCardData
   | BatchResultCardData
@@ -565,7 +615,12 @@ export interface MingZhangApi {
   /** 确认入账（UI 按钮专用）。支出/收入缺分类时必须给 categoryName（UI 下拉选择）。返回语义化结果。 */
   confirmRecord: (txId: number, categoryName?: string) => Promise<ExecResult>
   /** 确认门执行（删除/批次），仅 UI 确认按钮调用。返回语义化结果。 */
-  confirmGate: (gateId: number) => Promise<ExecResult>
+  confirmGate: (gateId: number, expectedVersion?: string) => Promise<ExecResult>
+  getTransactionActions: (txId: number) => Promise<TransactionActionsDTO | null>
+  getTransactionSplitPlan: (gateId: number) => Promise<TransactionSplitPlanDTO | null>
+  prepareTransactionSplit: (input: { txId: number; expectedVersion: string; items: TransactionSplitItemInput[] }) => Promise<TransactionSplitPlanDTO>
+  undoTransactionSplit: (input: { gateId: number; expectedVersion: string }) => Promise<TransactionActionsDTO>
+  setTransactionExcluded: (input: { txId: number; expectedVersion: string; excluded: boolean }) => Promise<TransactionActionsDTO>
   cancelGate: (gateId: number) => Promise<ExecResult>
   /** 段4-2：详情抽屉动作组——改字段 / 删除 / 恢复 / 补转账账户（均 changed_by='user' + 审计）。 */
   editTx: (txId: number, op: TxEditOp) => Promise<ExecResult>

@@ -9,7 +9,6 @@ import {
   createTransaction,
   createImport,
   recordParse,
-  autoConfirm,
   requestReview,
   getTransaction,
   getThreshold,
@@ -18,13 +17,13 @@ import {
   resolveAccountId,
   resolveAccountIdWithMatch,
   updateFields,
-  softDelete,
   restore,
   type TransactionFull,
 } from '../domain/ledger'
 import { aggregate, PERIODS, type Period } from '../domain/queries'
 import { createPending } from '../domain/pending'
 import { prepareDeleteGate } from '../domain/gates'
+import { getTransactionActions, prepareTransactionSplit } from '../domain/transaction-actions'
 
 import { classifyByMerchant } from '../domain/builtin-categories'
 import { createM2Tools } from './tools-m2'
@@ -34,8 +33,7 @@ import { createM5Tools } from './tools-m5'
 import type {
   DeleteGateCardData,
 
-  SplitCardData,
-  TransactionCardData,
+  SplitGateCardData,
   QueryResultCardData,
   CardData,
 } from '../../shared/types'
@@ -407,70 +405,45 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
     name: 'split',
     label: '拆账',
     description:
-      '把一笔交易拆成多笔。子项金额之和必须等于原笔金额，不等会直接拒绝。拆分方式不明确时先反问用户，不要猜。',
+      '只生成拆账方案，不会改动或确认账目；完成前必须等待用户在界面点击「确认拆账」。仅已确认支出/收入可拆，金额守恒且分类必须是已有的同方向分类。',
     parameters: Type.Object({
       tx_id: Type.Integer({ description: '要拆分的交易 id' }),
       items: Type.Array(
         Type.Object({
           amount_cents: Type.Integer({ description: '子项金额（整数分）' }),
-          category_name: Type.Optional(Type.String({ description: '子项分类' })),
+          category_name: Type.Optional(Type.String({ description: '已有的同方向子项分类；省略时沿用原分类' })),
           merchant: Type.Optional(Type.String()),
           note: Type.Optional(Type.String()),
         }),
-        { minItems: 2, description: '拆分方案（至少 2 项）' },
+        { minItems: 2, description: '拆分方案（2至50项）' },
       ),
     }),
     execute: async (_toolCallId, params) => {
       const tx = txOf(db, params.tx_id)
-      if (tx.state === 'deleted') throw new Error(`交易 #${tx.id} 已删除，不能拆分`)
-      const sum = params.items.reduce((acc, it) => acc + it.amount_cents, 0)
-      if (sum !== tx.amount_cents) {
-        throw new Error(
-          `拆分子项之和 ¥${yuan(sum)} ≠ 原笔金额 ¥${yuan(tx.amount_cents)}，已拒绝。请和用户确认正确的拆分方案。`,
-        )
-      }
-      softDelete(db, tx.id, {
-        sourceMessageId: tx.source_message_id,
-        reasoning: 'split into 子项',
-      })
-      const cards: TransactionCardData[] = []
-      const createdIds: number[] = []
-      for (const item of params.items) {
-        let categoryId: number | null = null
-        if (item.category_name) {
-          const kind = tx.type === 'income' ? 'income' : 'expense'
-          categoryId =
-            findCategoryId(db, item.category_name, kind) ??
-            getOrCreateCategoryId(db, item.category_name, kind, { changedBy: 'user' })
+      const actions = getTransactionActions(db, tx.id)
+      if (!actions) throw new Error(`交易 #${tx.id} 不存在`)
+      const kind = tx.type === 'income' ? 'income' : 'expense'
+      const items = params.items.map((item) => {
+        let categoryId: number | undefined
+        if (item.category_name !== undefined) {
+          const found = findCategoryId(db, item.category_name, kind)
+          if (found === null) throw new Error(`分类「${item.category_name}」不存在或方向不匹配；拆账不会自动新建分类`)
+          categoryId = found
         }
-        const newId = createTransaction(db, {
+        return {
           amountCents: item.amount_cents,
-          txType: tx.type as 'expense' | 'income' | 'transfer' | 'adjustment',
-          accountId: tx.account_id,
-          occurredAt: tx.occurred_at,
-          merchant: item.merchant ?? tx.merchant,
-          note: item.note ?? null,
-          sourceMessageId: tx.source_message_id,
-          changedBy: 'user',
-        })
-        // 子项直接 confirmed（A4：一次性确认全部子项）；解析审计链保持口径一致
-        recordParse(db, newId, {
-          amountCents: item.amount_cents,
-          categoryId,
-          merchant: item.merchant ?? tx.merchant,
-          confidenceScore: 1,
-          sourceMessageId: tx.source_message_id,
-          reasoning: '拆分子项',
-        })
-        autoConfirm(db, newId, { confidenceScore: 1, sourceMessageId: tx.source_message_id })
-        updateFields(db, newId, { note: item.note ?? null }, { reasoning: `split from #${tx.id}`, changedBy: 'user' })
-        cards.push(buildCard(db, txOf(db, newId)))
-        createdIds.push(newId)
-      }
-      const splitCard: SplitCardData = { kind: 'split', originalId: tx.id, cards }
+          ...(categoryId === undefined ? {} : { categoryId }),
+          ...(item.merchant === undefined ? {} : { merchant: item.merchant }),
+          ...(item.note === undefined ? {} : { note: item.note }),
+        }
+      })
+      const plan = prepareTransactionSplit(db, { txId: tx.id, expectedVersion: actions.version, items }, {
+        via: 'chat', sessionId: getTurnContext().sessionId,
+      })
+      const card: SplitGateCardData = { kind: 'split-gate', plan }
       return {
-        content: [{ type: 'text', text: `已把 #${tx.id} 拆成 ${createdIds.map((id) => `#${id}`).join(' + ')}。` }],
-        details: { card: splitCard },
+        content: [{ type: 'text', text: `拆账方案已保存为待确认（原交易 #${tx.id}，${plan.items.length} 项）；尚未拆账，账本未改动。请用户在界面检查并点击「确认拆账」。` }],
+        details: { card },
       }
     },
   })

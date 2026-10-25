@@ -440,6 +440,24 @@ function stateBeforeDelete(db: Database, txId: number): string {
   }
 }
 
+/** A split group is restored only through its atomic undo path, never one transaction at a time. */
+function assertSplitRestoreAllowed(db: Database, txId: number): void {
+  const found = db.prepare('SELECT value FROM settings WHERE key=?').get(`transaction.split-link:${txId}`) as { value: string } | undefined
+  if (!found) return
+  let link: { gateId?: number; role?: string; state?: string }
+  try {
+    link = JSON.parse(found.value) as { gateId?: number; role?: string; state?: string }
+  } catch {
+    throw new Error(`交易 #${txId} 的拆账关联损坏，已停止单独恢复`)
+  }
+  if (!Number.isSafeInteger(link.gateId) || !['original', 'child'].includes(link.role ?? '') || !['active', 'undone'].includes(link.state ?? '')) {
+    throw new Error(`交易 #${txId} 的拆账关联损坏，已停止单独恢复`)
+  }
+  if (link.role === 'child' || link.state === 'active') {
+    throw new Error('拆账组不能单独恢复，请使用原笔的「撤销拆账」一次性恢复，避免重复计账')
+  }
+}
+
 /** deleted → 删除前状态（通常 confirmed），记 restore 审计。仅对 deleted 有效。 */
 export function restore(
   db: Database,
@@ -449,6 +467,7 @@ export function restore(
   const cur = db.prepare('SELECT state FROM transactions WHERE id=?').get(txId) as { state: string } | undefined
   if (!cur) throw new Error(`交易 #${txId} 不存在`)
   if (cur.state !== 'deleted') throw new Error('这笔当前未处于删除状态，无需恢复')
+  assertSplitRestoreAllowed(db, txId)
   const target = stateBeforeDelete(db, txId)
   setState(db, txId, target, {
     changedBy: 'user',

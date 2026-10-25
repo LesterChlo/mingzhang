@@ -8,7 +8,7 @@ import type { Database } from 'better-sqlite3-multiple-ciphers'
 import { nowIso } from '../db/time'
 
 /** 需要 UI 按钮确认的事项类型。这些 field 永远不能被"对话补答"关闭。 */
-export const GATE_FIELDS = new Set(['delete_confirm', 'batch_confirm', 'batch_classify'])
+export const GATE_FIELDS = new Set(['delete_confirm', 'batch_confirm', 'batch_classify', 'split_confirm'])
 
 export interface PendingRow {
   id: number

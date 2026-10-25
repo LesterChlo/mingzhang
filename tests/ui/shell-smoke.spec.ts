@@ -737,7 +737,7 @@ test.describe('账本（真实数据）', () => {
     await page.getByTestId('ledger-clear-all').click()
   })
 
-  test('账本⑤ 待后端项是诚实的禁用态：日期/类型/拆账/标记不计收支', async () => {
+  test('账本⑤ 日期/类型仍禁用，拆账与不计收支为唯一真实入口且打开只读', async () => {
     // ④ 已经选中了这行，而行点击是**开关式**（再点一次取消选中），所以这里只在
     // 详情栏没开时才点——否则会把刚开的面板又关掉。
     if ((await page.getByTestId('ledger-detail').count()) === 0) {
@@ -745,11 +745,24 @@ test.describe('账本（真实数据）', () => {
     }
     const todo = page.getByTestId('ledger-backend-todo')
     await expect(todo).toBeVisible()
-    for (const id of ['date', 'type', 'split', 'adjust']) {
+    // 本单独立于尚未合并的日期/类型编辑，保留这两项诚实禁用说明。
+    for (const id of ['date', 'type']) {
       await expect(page.getByTestId(`ledger-todo-${id}`)).toBeDisabled()
     }
-    // 原因逐条写清，不给假按钮
     await expect(todo).toContainText('待后端')
+    await expect(page.getByTestId('ledger-actions')).toHaveAttribute('aria-busy', 'false')
+    const before = await page.evaluate(() => window.mz.listLedger({}))
+    const history = await page.evaluate(() => window.mz.loadHistory())
+    await expect(page.getByTestId('ledger-split-open')).toBeEnabled()
+    await expect(page.getByTestId('ledger-exclude-toggle')).toBeEnabled()
+    await expect(page.getByTestId('ledger-todo-split')).toHaveCount(0)
+    await expect(page.getByTestId('ledger-todo-adjust')).toHaveCount(0)
+    expect(await page.evaluate(() => window.mz.listLedger({}))).toEqual(before)
+    const afterHistory = await page.evaluate(() => window.mz.loadHistory())
+    expect(afterHistory.filter(m => m.role === 'user').length).toBe(history.filter(m => m.role === 'user').length)
+    // 独立 base 的 history.ts 每次投影都 h-${++seq}；只排除临时 ID，保其余全部字段。
+    // 稳定历史 ID 属另一未合 PR，不能为本单只读断言夹带其实现。
+    expect(afterHistory.map(({ id: _id, ...message }) => message)).toEqual(history.map(({ id: _id, ...message }) => message))
   })
 
   test('账本⑥ 删除 → 实测口径：直接软删，收件箱**不**出现删除确认卡', async () => {

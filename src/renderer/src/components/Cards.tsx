@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { SplitPlanCard } from '../views/SplitPlanCard'
 import type {
   BatchGateCardData,
   BatchResultCardData,
@@ -100,6 +101,8 @@ export function CardView({
       return <RuleCard card={card} />
     case 'split':
       return <SplitCardView card={card} onOpenTx={onOpenTx} />
+    case 'split-gate':
+      return <SplitPlanCard plan={card.plan} readOnly={chatContext || gateMode(card.plan.gateId) !== 'live'} />
     case 'batch-gate':
       return (
         <BatchGateCard

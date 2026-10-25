@@ -13,7 +13,7 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { mkdtempSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { makeWechatXlsxBuffer } from '../xlsx-fixture'
+import { makeWechatXlsxBuffer, makeKnownAccountWechatXlsxBuffer } from '../xlsx-fixture'
 import { startFakeProvider } from '../fake-provider'
 import { confirmSingleRecord } from './single-record-fixture'
 
@@ -1143,7 +1143,7 @@ test.describe('批次结果条（真实数据）', () => {
     await barPage.getByTestId('nav-inbox').click()
     const capture = barPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await barPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)
@@ -1360,7 +1360,7 @@ test.describe('助手面板与归类映射表（②B 真实数据）', () => {
     await panelPage.getByTestId('nav-inbox').click()
     const capture = panelPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await panelPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)

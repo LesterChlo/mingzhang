@@ -527,8 +527,8 @@ describe('引擎端到端（脚本化模型）', () => {
           source_type: 'csv',
           channel: '支付宝',
           items: [
-            { amount_cents: 1250, tx_type: 'expense', merchant: '便利店', reliable_id: 'ORD-001', occurred_at: '2026-09-01T10:00:00+08:00' },
-            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-002', occurred_at: '2026-09-02T11:00:00+08:00' },
+            { amount_cents: 1250, tx_type: 'expense', merchant: '便利店', reliable_id: 'ORD-001', occurred_at: '2026-09-01T10:00:00+08:00', account_name: '支付宝' },
+            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-002', occurred_at: '2026-09-02T11:00:00+08:00', account_name: '支付宝' },
             { merchant: '信息不全的条目', reliable_id: 'ORD-003', source_text: '2026-09-03 12:00,信息不全的条目,,ORD-003' },
           ],
         },
@@ -585,7 +585,7 @@ ${csv}`, [])
         args: {
           source_type: 'csv',
           channel: '支付宝',
-          items: [{ amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: orderId }],
+          items: [{ amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: orderId, occurred_at: '2026-09-01T10:00:00+08:00', account_name: '支付宝' }],
         },
       },
     })
@@ -608,7 +608,7 @@ ${csv}`, [])
           channel: '支付宝',
           items: [
             { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-A' },
-            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-B' },
+            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-B', occurred_at: '2026-09-02T11:00:00+08:00', account_name: '支付宝' },
           ],
         },
       },

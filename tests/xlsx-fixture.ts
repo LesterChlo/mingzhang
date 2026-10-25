@@ -36,13 +36,20 @@ export const WECHAT_ROWS: string[][] = [
 ]
 
 /** 生成一份"假微信账单" xlsx 的字节（ArrayBuffer）。 */
-export function makeWechatXlsxBuffer(rowCount?: number): ArrayBuffer {
-  const rows = rowCount === undefined ? WECHAT_ROWS : bulkWechatRows(rowCount)
+export function makeWechatXlsxBuffer(rowCount?: number, fixtureRows: string[][] = WECHAT_ROWS): ArrayBuffer {
+  const rows = rowCount === undefined ? fixtureRows : bulkWechatRows(rowCount)
   const aoa: (string[] | undefined)[][] = [...PREAMBLE, WECHAT_HEADER, ...rows, [], ['---- 以上为账单内容 ----']]
   const ws = XLSX.utils.aoa_to_sheet(aoa)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, '微信支付账单')
   return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+}
+
+/** 正常UI导入使用明确账户；默认原表仍保留“零钱通”未知值供解析/预检负控。 */
+export function makeKnownAccountWechatXlsxBuffer(): ArrayBuffer {
+  const rows = WECHAT_ROWS.map((row) => [...row])
+  rows[2][6] = '零钱'
+  return makeWechatXlsxBuffer(undefined, rows)
 }
 
 /** 生成一份没有账单表头的坏 xlsx（模拟非账单文件）。 */

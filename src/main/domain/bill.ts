@@ -497,7 +497,7 @@ export function applyBillPlan(
       const mapped = mapValue(cell(r.cells, resolved.direction), plan.direction_column_values, DEFAULT_DIRECTION)
       if (mapped && mapped !== 'unmapped') txType = mapped
       else if (plan.amount_signed) txType = amt ? (amt.negative ? 'expense' : 'income') : undefined
-      else txType = plan.default_type ?? (amt && occurredAt ? 'expense' : undefined)
+      else txType = plan.default_type
     }
 
     let accountName: string | null = null
@@ -535,7 +535,7 @@ export function applyBillPlan(
   }
 
   const newish = items.filter((i) => !i.review_reason)
-  const reviewCount = items.length - newish.length
+  let reviewCount = items.length - newish.length
   const rowsConsidered = parsedRows.length
 
   let out: BillApplyResult | null = null
@@ -558,13 +558,14 @@ export function applyBillPlan(
       plan_ = prep.plan
       newCount = prep.plan.newCount
       duplicateCount = prep.plan.duplicateCount
+      reviewCount = prep.plan.unparsedCount
       const gate = gateId
       const upd = db.prepare("UPDATE bill_rows SET disposition = ?, gate_id = ?, reason = ? WHERE table_id = ? AND row_no = ?")
       for (const it of prep.plan.items) {
         if (it.rowNo === null || it.rowNo === undefined) continue
         const d = dispositions.find((x) => x.no === it.rowNo)
         const disposition = it.status === 'unparsed' ? 'review' : 'planned'
-        upd.run(disposition, gate, d?.reason ?? null, table.id, it.rowNo)
+        upd.run(disposition, gate, d?.reason ?? (it.status === 'unparsed' ? it.reason ?? null : null), table.id, it.rowNo)
       }
     }
     const skipUpd = db.prepare("UPDATE bill_rows SET disposition = 'skipped', reason = ? WHERE table_id = ? AND row_no = ?")

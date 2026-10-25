@@ -26,7 +26,7 @@ import { nowIso } from '../db/time'
 
 export interface BatchItemInput {
   amount_cents?: number | null
-  tx_type?: 'expense' | 'income' | 'transfer' | 'adjustment'
+  tx_type?: 'expense' | 'income' | 'transfer' | 'adjustment' | null
   merchant?: string | null
   occurred_at?: string | null
   category_name?: string | null
@@ -58,6 +58,35 @@ export interface BatchPlanItem {
   toAccountName?: string | null
   rawTxType?: string | null
   note?: string | null
+}
+
+type BatchTxType = NonNullable<BatchItemInput['tx_type']>
+const isBatchTxType = (value: unknown): value is BatchTxType =>
+  typeof value === 'string' && ['expense', 'income', 'transfer', 'adjustment'].includes(value)
+
+/** 已持久化计划优先信任原始来源方向；旧版未保存rawTxType时才接受明确保存的txType。 */
+function batchPlanTxType(item: BatchPlanItem): BatchTxType | null {
+  const source = Object.prototype.hasOwnProperty.call(item, 'rawTxType') ? item.rawTxType : item.txType
+  return isBatchTxType(source) ? source : null
+}
+
+function batchItemMissingFields(item: BatchPlanItem): string[] {
+  const kind = batchPlanTxType(item)
+  const badAmount = !Number.isSafeInteger(item.amountCents) || (kind === 'adjustment' ? item.amountCents === 0 : (item.amountCents ?? 0) <= 0)
+  const missing: string[] = []
+  if (badAmount) missing.push('amountCents')
+  if (!kind) missing.push('txType')
+  if (!validImportOccurredAt(item.occurredAt)) missing.push('occurredAt')
+  if (typeof item.accountName !== 'string' || item.accountName.trim().length === 0) missing.push('accountId')
+  return missing
+}
+
+function batchItemMissingReason(item: BatchPlanItem): string {
+  const missing = batchItemMissingFields(item)
+  if (missing.includes('txType')) return '收支方向无法确认'
+  if (missing.includes('occurredAt')) return '交易日期无法确认'
+  if (missing.includes('accountId')) return '账户信息无法确认'
+  return '金额无法从材料确认'
 }
 
 export interface BatchPlan {
@@ -125,7 +154,7 @@ export function prepareBatch(
       dedupKey, note: item.note ?? null,
     }
     const badAmount = !Number.isSafeInteger(item.amount_cents) || (item.tx_type === 'adjustment' ? item.amount_cents === 0 : (item.amount_cents ?? 0) <= 0)
-    const badType = item.tx_type !== undefined && !['expense','income','transfer','adjustment'].includes(item.tx_type)
+    const badType = item.tx_type !== undefined && !isBatchTxType(item.tx_type)
     const badDate = item.occurred_at !== undefined && item.occurred_at !== null && !validImportOccurredAt(item.occurred_at)
     if (item.review_reason || badAmount || badType || badDate) {
       // C4：无法确认金额/时间 → 保存来源待收尾，不虚构、不默认成今天
@@ -155,10 +184,22 @@ export function prepareBatch(
         continue
       }
     }
+    const missingType = !isBatchTxType(item.tx_type)
+    const missingDate = !validImportOccurredAt(item.occurred_at)
+    const missingAccount = typeof item.account_name !== 'string' || item.account_name.trim().length === 0
+    if (missingType || missingDate || missingAccount) {
+      plan.items.push({
+        status: 'unparsed',
+        ...original,
+        reason: missingType ? '收支方向无法确认' : missingDate ? '交易日期无法确认' : '账户信息无法确认',
+      })
+      plan.unparsedCount += 1
+      continue
+    }
     plan.items.push({
       status: 'new',
       ...original,
-      txType: item.tx_type ?? 'expense',
+      txType: item.tx_type as BatchTxType,
     })
     plan.newCount += 1
   }
@@ -195,6 +236,7 @@ export function executeBatch(db: Database, gateId: number): BatchResult | null {
   // 一次性 + 原子性：整体包进事务——任何一步抛错全部回滚、gate 保持 open 可重试（防半执行/重复执行）
   let out: BatchResult | null = null
   const run = db.transaction((): void => {
+  const legacyUnparsed: BatchPlanItem[] = []
   for (const item of plan.items) {
     if (item.status === 'duplicate') {
       result.duplicates.push({
@@ -210,7 +252,14 @@ export function executeBatch(db: Database, gateId: number): BatchResult | null {
 
       continue
     }
-    const txType = (item.txType ?? 'expense') as 'expense' | 'income' | 'transfer' | 'adjustment'
+    const missingFields = batchItemMissingFields(item)
+    if (missingFields.length > 0) {
+      // 持久化的旧new门也必须先通过同一必填检查；不得先createTransaction再补救。
+      legacyUnparsed.push(item)
+      result.unparsedKept += 1
+      continue
+    }
+    const txType = batchPlanTxType(item)!
     if (txType === 'transfer') {
       // 批次转账缺账户对信息（执行入口无法追问）——不入账（DB 约束禁止无对方账户的转账置 confirmed）。
       // 计入 transfersSkipped，并落一条"缺账户"待办（已落库，关对话不丢），由用户补转入/转出账户后记一笔。
@@ -308,15 +357,16 @@ export function executeBatch(db: Database, gateId: number): BatchResult | null {
   }
 
   // 待核对项落待收尾（tx_id=NULL，不虚构金额）；全部办结才把批次收口为 confirmed
-  const openUnparsed = plan.items.filter((i) => i.status === 'unparsed')
+  const openUnparsed = [...plan.items.filter((i) => i.status === 'unparsed'), ...legacyUnparsed]
   for (const item of openUnparsed) {
     const where = item.rowNo ? `第 ${item.rowNo} 行` : (item.merchant ?? '材料未提供信息')
+    const reason = item.reason ?? batchItemMissingReason(item)
     createPending(db, {
       txId: null,
       sessionId: gate.session_id,
       field: 'batch_item',
-      question: `${item.reason ?? '金额待补'}：${where}——${item.sourceText ?? ''}`.trim(),
-      payload: importExceptionPayload(db, plan, item),
+      question: `${reason}：${where}——${item.sourceText ?? ''}`.trim(),
+      payload: importExceptionPayload(db, plan, {...item, txType: batchPlanTxType(item), reason}),
     })
   }
   result.importStatus = settleImportForBatch(db, {batchId:plan.batchId, importId:plan.importId})

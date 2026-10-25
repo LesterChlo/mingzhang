@@ -51,4 +51,3 @@ test('待核对、转账、遗留调整和删除态如实禁用，不发送模�
 test('深浅窄窗真实滚轮可到收支归属动作，坐标点击回读无整页横滚',async()=>{
   for(const theme of ['light','dark']){await page.evaluate(t=>window.mz.setTheme(t as 'light'|'dark'),theme);await page.reload();await page.waitForSelector('.mz-shell');await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1100,600));await open();const button=actions().getByTestId('ledger-exclude-toggle');await wheelTo(button);expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(0);let r=await button.boundingBox();await page.mouse.click(r!.x+r!.width/2,r!.y+r!.height/2);await expect(button).toHaveText('恢复计入收支');expect(await reportTotal()).toBe(0);await wheelTo(button);r=await button.boundingBox();await page.mouse.click(r!.x+r!.width/2,r!.y+r!.height/2);await expect(button).toHaveText('标记不计收支');expect(await reportTotal()).toBe(8750)}expect(errors).toEqual([])
 })
-

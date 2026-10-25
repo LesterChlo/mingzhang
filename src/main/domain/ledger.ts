@@ -301,19 +301,21 @@ function setState(
     confidenceScore?: number | null
   },
 ): void {
-  const before = snapshot(db, txId)
-  db.prepare('UPDATE transactions SET state=?, updated_at=? WHERE id=?').run(state, nowIso(), txId)
-  writeAudit(db, {
-    entity_type: 'transaction',
-    entity_id: txId,
-    changed_by: opts.changedBy,
-    change_type: opts.changeType,
-    before_value: before,
-    after_value: snapshot(db, txId),
-    source_message_id: opts.sourceMessageId ?? null,
-    reasoning: opts.reasoning ?? null,
-    confidence_score: opts.confidenceScore ?? null,
-  })
+  db.transaction(() => {
+    const before = snapshot(db, txId)
+    db.prepare('UPDATE transactions SET state=?, updated_at=? WHERE id=?').run(state, nowIso(), txId)
+    writeAudit(db, {
+      entity_type: 'transaction',
+      entity_id: txId,
+      changed_by: opts.changedBy,
+      change_type: opts.changeType,
+      before_value: before,
+      after_value: snapshot(db, txId),
+      source_message_id: opts.sourceMessageId ?? null,
+      reasoning: opts.reasoning ?? null,
+      confidence_score: opts.confidenceScore ?? null,
+    })
+  })()
 }
 
 /** parsed → confirmed（隐式确认，changed_by=llm）。 */
@@ -386,26 +388,28 @@ export function updateFields(
   for (const k of keys) {
     if (!UPDATABLE_COLUMNS.has(k)) throw new Error(`不允许更新的字段：${k}`)
   }
-  // 第 6 单 段1 护栏：已删除的交易不能就地改字段（须先恢复）——历史快照不得改活已删账
-  const cur = db.prepare('SELECT state FROM transactions WHERE id=?').get(txId) as { state: string } | undefined
-  if (cur?.state === 'deleted') throw new Error('这笔已删除，请先恢复后再修改')
-  const before = snapshot(db, txId)
-  const assignments = keys.map((k) => `${k}=?`).join(', ')
-  db.prepare(`UPDATE transactions SET ${assignments}, updated_at=? WHERE id=?`).run(
-    ...keys.map((k) => fields[k] ?? null),
-    nowIso(),
-    txId,
-  )
-  writeAudit(db, {
-    entity_type: 'transaction',
-    entity_id: txId,
-    changed_by: opts.changedBy ?? 'user',
-    change_type: opts.changeType ?? 'update',
-    before_value: before,
-    after_value: snapshot(db, txId),
-    source_message_id: opts.sourceMessageId ?? null,
-    reasoning: opts.reasoning ?? null,
-  })
+  db.transaction(() => {
+    // 第 6 单 段1 护栏：已删除的交易不能就地改字段（须先恢复）——历史快照不得改活已删账
+    const cur = db.prepare('SELECT state FROM transactions WHERE id=?').get(txId) as { state: string } | undefined
+    if (cur?.state === 'deleted') throw new Error('这笔已删除，请先恢复后再修改')
+    const before = snapshot(db, txId)
+    const assignments = keys.map((k) => `${k}=?`).join(', ')
+    db.prepare(`UPDATE transactions SET ${assignments}, updated_at=? WHERE id=?`).run(
+      ...keys.map((k) => fields[k] ?? null),
+      nowIso(),
+      txId,
+    )
+    writeAudit(db, {
+      entity_type: 'transaction',
+      entity_id: txId,
+      changed_by: opts.changedBy ?? 'user',
+      change_type: opts.changeType ?? 'update',
+      before_value: before,
+      after_value: snapshot(db, txId),
+      source_message_id: opts.sourceMessageId ?? null,
+      reasoning: opts.reasoning ?? null,
+    })
+  })()
 }
 
 /** deleted 终态软删（changed_by=user）。重复删除幂等不炸。 */
@@ -440,21 +444,32 @@ function stateBeforeDelete(db: Database, txId: number): string {
   }
 }
 
-/** A split group is restored only through its atomic undo path, never one transaction at a time. */
+/** Block duplicate-counting restores, but allow ordinary deletion/recovery of an active child. */
 function assertSplitRestoreAllowed(db: Database, txId: number): void {
   const found = db.prepare('SELECT value FROM settings WHERE key=?').get(`transaction.split-link:${txId}`) as { value: string } | undefined
   if (!found) return
-  let link: { gateId?: number; role?: string; state?: string }
+  let link: { gateId?: number; originalId?: number; childIds?: number[]; role?: string; state?: string } | null
   try {
-    link = JSON.parse(found.value) as { gateId?: number; role?: string; state?: string }
+    link = JSON.parse(found.value) as typeof link
   } catch {
     throw new Error(`交易 #${txId} 的拆账关联损坏，已停止单独恢复`)
   }
-  if (!Number.isSafeInteger(link.gateId) || !['original', 'child'].includes(link.role ?? '') || !['active', 'undone'].includes(link.state ?? '')) {
+  if (!link || !Number.isSafeInteger(link.gateId) || (link.gateId ?? 0) <= 0 ||
+    !Number.isSafeInteger(link.originalId) || (link.originalId ?? 0) <= 0 || !Array.isArray(link.childIds) ||
+    link.childIds.length < 2 || link.childIds.some((id) => !Number.isSafeInteger(id) || id <= 0 || id === link!.originalId) ||
+    new Set(link.childIds).size !== link.childIds.length ||
+    !['original', 'child'].includes(link.role ?? '') || !['active', 'undone'].includes(link.state ?? '') ||
+    (link.role === 'original' ? link.originalId !== txId : !link.childIds.includes(txId))) {
     throw new Error(`交易 #${txId} 的拆账关联损坏，已停止单独恢复`)
   }
-  if (link.role === 'child' || link.state === 'active') {
+  if ((link.role === 'original' && link.state === 'active') || (link.role === 'child' && link.state === 'undone')) {
     throw new Error('拆账组不能单独恢复，请使用原笔的「撤销拆账」一次性恢复，避免重复计账')
+  }
+  if (link.role === 'child') {
+    const original = db.prepare('SELECT state FROM transactions WHERE id=?').get(link.originalId) as { state: string } | undefined
+    if (original?.state !== 'deleted') {
+      throw new Error('拆账组不能单独恢复，请使用原笔的「撤销拆账」一次性恢复，避免重复计账')
+    }
   }
 }
 

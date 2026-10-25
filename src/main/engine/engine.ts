@@ -708,7 +708,12 @@ export class Engine {
     if (this.confirming.has(key)) return { status: 'in_flight', message: '这笔正在处理，请稍候…' }
     this.confirming.add(key)
     try {
-      return this.doEditTx(txId, op)
+      const committedEvents: ChatEvent[] = []
+      let result!: ExecResult
+      this.db.transaction(() => { result = this.doEditTx(txId, op, committedEvents) })()
+      // Publish only after the whole edit (including category/pending side effects) commits.
+      for (const event of committedEvents) this.broadcast(event)
+      return result
     } catch (e) {
       return { status: 'error', message: `操作失败：${(e as Error).message}` }
     } finally {
@@ -716,7 +721,7 @@ export class Engine {
     }
   }
 
-  private doEditTx(txId: number, op: TxEditOp): ExecResult {
+  private doEditTx(txId: number, op: TxEditOp, committedEvents: ChatEvent[]): ExecResult {
     const tx = getTransaction(this.db, txId)
     if (!tx) return { status: 'not_found', message: `交易 #${txId} 不存在` }
 
@@ -725,14 +730,14 @@ export class Engine {
       softDelete(this.db, txId, { reasoning: '用户在账本详情里删除' })
       const review = findOpenByTxAndField(this.db, txId, 'confirm_record')
       if (review) closePending(this.db, review.id, 'cancelled')
-      this.broadcast({ type: 'tx-deleted', payload: { txId } })
+      committedEvents.push({ type: 'tx-deleted', payload: { txId } })
       return { status: 'ok', message: `已删除 #${txId}，可随时恢复` }
     }
 
     if (op.op === 'restore') {
       if (tx.state !== 'deleted') return { status: 'already_closed', message: '这笔未处于删除状态' }
       restore(this.db, txId, { reasoning: '用户在账本详情里恢复' })
-      this.broadcast({ type: 'tx-restored', payload: { txId } })
+      committedEvents.push({ type: 'tx-restored', payload: { txId } })
       return { status: 'ok', message: `已恢复 #${txId}` }
     }
 
@@ -750,7 +755,7 @@ export class Engine {
       updateFields(this.db, txId, fields, { changedBy: 'user', reasoning: '用户在账本详情补转账账户' })
       if (tx.state !== 'confirmed') confirmTx(this.db, txId, { reasoning: '用户补齐转入账户后确认' })
       const card = buildCard(this.db, txOf(this.db, txId))
-      this.broadcast({ type: 'record-confirmed', payload: { card } })
+      committedEvents.push({ type: 'record-confirmed', payload: { card } })
       return { status: 'ok', message: `转账账户已补齐，入账 #${txId}`, card }
     }
 

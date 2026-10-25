@@ -3,11 +3,13 @@
 // 「重新配置模型」不经过这里：纯渲染层状态切换，向导完成后走已有的 completeOnboarding。
 
 import { ipcMain, dialog, app } from 'electron'
-import { readdirSync, statSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import type { SettingsInfoDTO } from '../shared/types'
 import { getSetting, setSetting } from './domain/ledger'
+import { readAttachmentDataUrl } from './attachment-files'
+import { cleanupUnreferencedAttachments } from './domain/transaction-attachments'
 import {
   lastSnapshotInfo,
   snapshot,
@@ -85,20 +87,9 @@ export function registerSettingsIpc(ctx: SettingsIpcContext): void {
   })
 
   ipcMain.handle('mz:cleanupAttachments', (_e, keepDays: number) => {
-    const cutoff = Date.now() - Math.max(1, keepDays) * 24 * 60 * 60 * 1000
-    let removed = 0
-    try {
-      for (const f of readdirSync(ctx.attachmentsDir)) {
-        const p = join(ctx.attachmentsDir, f)
-        if (statSync(p).mtimeMs < cutoff) {
-          rmSync(p, { force: true })
-          removed += 1
-        }
-      }
-    } catch {
-      // 目录异常时返回已删除数
-    }
-    return removed
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪，无法安全清理附件')
+    return cleanupUnreferencedAttachments(db, ctx.attachmentsDir, keepDays)
   })
 
   ipcMain.handle('mz:createSnapshotNow', () => {
@@ -198,17 +189,7 @@ export function registerSettingsIpc(ctx: SettingsIpcContext): void {
   })
 
   ipcMain.handle('mz:readAttachment', (_e, relPath: string) => {
-    // 安全：只允许读 attachmentsDir 内的文件（参考 readArchive 的校验做法）
-    const norm = relPath.replaceAll('\\', '/')
-    if (norm.includes('..') || norm.startsWith('/')) return null
-    const base = ctx.attachmentsDir.replaceAll('\\', '/') + '/'
-    const full = join(ctx.attachmentsDir, norm)
-    if (!existsSync(full) || !statSync(full).isFile()) return null
-    if (!full.replaceAll('\\', '/').startsWith(base)) return null
-    const ext = norm.split('.').pop()?.toLowerCase() ?? ''
-    const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : null
-    if (!mime) return null
-    return `data:${mime};base64,${readFileSync(full).toString('base64')}`
+    return readAttachmentDataUrl(ctx.attachmentsDir, relPath)
   })
 
   ipcMain.handle('mz:listSessions', () => (ctx.engines ? ctx.engines.get().listArchivedSessions() : ctx.listArchivedSessions()))

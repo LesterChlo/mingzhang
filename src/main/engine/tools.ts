@@ -25,6 +25,7 @@ import {
 import { aggregate, PERIODS, type Period } from '../domain/queries'
 import { createPending } from '../domain/pending'
 import { prepareDeleteGate } from '../domain/gates'
+import { registerTransactionSourceAttachments } from '../domain/transaction-attachments'
 
 import { classifyByMerchant } from '../domain/builtin-categories'
 import { createM2Tools } from './tools-m2'
@@ -119,6 +120,8 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
         }
       }
 
+      // Source authority and the original record/audit unit commit or roll back together.
+      return (db.transaction as unknown as <T>(fn: () => T) => () => T)(() => {
       const importId = createImport(db, {
         sourceType: ctx.hasImage ? 'screenshot' : 'text',
         status: 'parsed',
@@ -138,6 +141,8 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
         sourceMessageId: ctx.sourceMessageId,
         changedBy: 'user',
       })
+
+      registerTransactionSourceAttachments(db, txId, ctx.attachments)
 
       // 分类：模型显式 ＞ 用户规则 ＞ 常识表 ＞ 再缺才转待确认
       let categoryId: number | null = null
@@ -208,7 +213,8 @@ export function createLedgerTools(deps: EngineDeps): ToolDefinition[] {
       // 账户没匹配上：点名说出来（模型会照着转述给用户），不静默（缺陷③）
       if (accountMissNote) text += ` ⚠ ${accountMissNote}`
 
-      return { content: [{ type: 'text', text }], details: { importId, card, accountMiss: !account.matched } }
+      return { content: [{ type: 'text' as const, text }], details: { importId, card, accountMiss: !account.matched } }
+      })()
     },
   })
 

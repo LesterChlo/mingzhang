@@ -37,13 +37,16 @@ export function cleanAttachmentName(name: string, mime: string): string {
 export function safeAttachmentRoot(dir: string): string {
   if (typeof dir !== 'string' || !dir || dir.includes('\0')) throw new Error('附件目录不可用')
   const root = resolve(dir), anchor = parse(root).root
-  let current = anchor
+  let current = anchor, canonical = anchor
   for (const part of root.slice(anchor.length).split(sep).filter(Boolean)) {
     current = join(current, part)
     const stat = lstatSync(current)
-    if (stat.isSymbolicLink() || !stat.isDirectory() || identityPath(realpathSync.native(current)) !== identityPath(current)) throw new Error('附件目录含链接或不可用')
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('附件目录含链接或不可用')
+    const real = realpathSync.native(current)
+    if (!sameFile(stat, lstatSync(real))) throw new Error('附件目录含链接或不可用')
+    canonical = real
   }
-  return root
+  return canonical
 }
 export function safeAttachmentFile(dir: string, ref: unknown): { path: string; stat: Stats } | null {
   if (!isSafeAttachmentRef(ref)) return null

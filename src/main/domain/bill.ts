@@ -7,6 +7,7 @@ import type { Database } from 'better-sqlite3-multiple-ciphers'
 import { nowIso } from '../db/time'
 import { prepareBatch, type BatchItemInput, type BatchPlan } from './batch'
 import { listAccounts } from './ledger'
+import { validImportOccurredAt } from './import-exceptions'
 
 /** 一次入库的最大数据行数（超过要求按更短区间拆分，与字节上限无关）。 */
 export const MAX_BILL_ROWS = 5000
@@ -145,8 +146,8 @@ export function parseAmountCents(raw: string | undefined | null): { cents: numbe
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 const stamp = (y: number, m: number, d: number, hh: number, mm: number, ss: number): string | null => {
-  if (m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 59) return null
-  return `${y}-${pad(m)}-${pad(d)} ${pad(hh)}:${pad(mm)}:${pad(ss)}`
+  const value = `${y}-${pad(m)}-${pad(d)} ${pad(hh)}:${pad(mm)}:${pad(ss)}`
+  return validImportOccurredAt(value) ? value : null
 }
 
 /**
@@ -157,6 +158,7 @@ export function parseOccurredAt(raw: string | undefined | null, now: Date = new 
   if (!raw) return null
   const s = String(raw).trim()
   if (!s) return null
+  if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(s)) return validImportOccurredAt(s) ? s : null
 
   if (/^\d{14}$/.test(s)) {
     return stamp(+s.slice(0, 4), +s.slice(4, 6), +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14))
@@ -487,37 +489,15 @@ export function applyBillPlan(
     }
 
     const amt = parseAmountCents(cell(r.cells, resolved.amount))
-    if (!amt) {
-      const rawAmount = cell(r.cells, resolved.amount)
-      const reason = rawAmount ? `金额「${rawAmount}」解析不出` : '金额列为空'
-      dispositions.push({ no: r.no, disposition: 'review', reason })
-      items.push({ row_no: r.no, amount_cents: null, source_text: text, merchant: cell(r.cells, resolved.merchant) || null, review_reason: reason })
-      continue
-    }
-
+    const occurredAt = parseOccurredAt(cell(r.cells, resolved.time))
+    // 字段独立解析：金额/日期失败也保留原方向、账户及可靠交易号；例外不承接正常行的默认支出。
     let txType: BatchItemInput['tx_type']
     if (ov?.type && ov.type !== 'skip') txType = ov.type
     else {
       const mapped = mapValue(cell(r.cells, resolved.direction), plan.direction_column_values, DEFAULT_DIRECTION)
       if (mapped && mapped !== 'unmapped') txType = mapped
-      else if (plan.amount_signed) txType = amt.negative ? 'expense' : 'income'
-      else txType = plan.default_type ?? 'expense'
-    }
-
-    const occurredAt = parseOccurredAt(cell(r.cells, resolved.time))
-    const reason = occurredAt ? null : `交易时间「${cell(r.cells, resolved.time)}」解析不出`
-    if (!occurredAt) {
-      dispositions.push({ no: r.no, disposition: 'review', reason })
-      items.push({
-        row_no: r.no,
-        amount_cents: amt.cents,
-        tx_type: txType,
-        merchant: cell(r.cells, resolved.merchant) || null,
-        occurred_at: null,
-        source_text: text,
-        review_reason: reason ?? undefined,
-      })
-      continue
+      else if (plan.amount_signed) txType = amt ? (amt.negative ? 'expense' : 'income') : undefined
+      else txType = plan.default_type ?? (amt && occurredAt ? 'expense' : undefined)
     }
 
     let accountName: string | null = null
@@ -537,10 +517,13 @@ export function applyBillPlan(
       if (rule) categoryName = rule.category_name
     }
 
-    dispositions.push({ no: r.no, disposition: 'planned', reason: null })
+    const rawAmount = cell(r.cells, resolved.amount)
+    const reason = !amt ? (rawAmount ? `金额「${rawAmount}」解析不出` : '金额列为空') : !occurredAt ? `交易时间「${cell(r.cells, resolved.time)}」解析不出` : null
+    dispositions.push({ no: r.no, disposition: reason ? 'review' : 'planned', reason })
     items.push({
       row_no: r.no,
-      amount_cents: amt.cents,
+      amount_cents: amt?.cents ?? null,
+      review_reason: reason ?? undefined,
       tx_type: txType,
       merchant: cell(r.cells, resolved.merchant) || null,
       occurred_at: occurredAt,

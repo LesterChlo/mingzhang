@@ -6,6 +6,23 @@
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import { nowIso } from '../db/time'
+import { updateImportStatus } from './ledger'
+
+/** 仅本批未办结例外与关联确认阻塞收口；其他批次的待办不参与。 */
+export function settleImportForBatch(db: Database, input: {batchId: string; importId: number | null; changedBy?: 'user' | 'import'}): 'pending' | 'confirmed' {
+  const rows = db.prepare("SELECT p.payload,p.field,t.source_message_id FROM pending_clarifications p LEFT JOIN transactions t ON t.id=p.tx_id WHERE p.status='open' AND p.field IN ('batch_item','transfer_account','confirm_record')").all() as {payload:string;field:string;source_message_id:string|null}[]
+  const remains = rows.some(r => {
+    let p: Record<string,unknown> = {}
+    try { p = JSON.parse(r.payload) } catch { /* 损坏关联payload仍可按交易来源保护 */ }
+    return r.source_message_id === input.batchId || p.batchId === input.batchId || (input.importId !== null && p.importId === input.importId)
+  })
+  const status = remains ? 'pending' : 'confirmed'
+  const imports = input.importId !== null
+    ? db.prepare('SELECT id,status FROM imports WHERE id=?').all(input.importId)
+    : db.prepare('SELECT id,status FROM imports WHERE source_message_id=?').all(input.batchId)
+  for (const imp of imports as {id:number;status:string}[]) if (imp.status !== status) updateImportStatus(db,imp.id,status,{changedBy:input.changedBy ?? 'import',sourceMessageId:input.batchId})
+  return status
+}
 
 /** 需要 UI 按钮确认的事项类型。这些 field 永远不能被"对话补答"关闭。 */
 export const GATE_FIELDS = new Set(['delete_confirm', 'batch_confirm', 'batch_classify'])

@@ -556,13 +556,22 @@ ${csv}`, [])
       .get() as { n: number }
     expect(kept.n).toBe(1)
 
-    // 补答金额 → 入账 + 批次收口
+    // Issue24: model free-text cannot guess missing direction/date/account or close the original row.
     const item = db
       .prepare("SELECT id FROM pending_clarifications WHERE field='batch_item' AND status='open'")
       .get() as { id: number }
     queue({ kind: 'tool', tool: { name: 'pending', args: { action: 'answer', gate_id: item.id, answer: '15 餐饮' } } })
-    queue({ kind: 'text', text: '补上了。' })
+    queue({ kind: 'text', text: '请在原待办明确补齐。' })
     await engine.sendChat('那笔是 15 块，餐饮', [])
+    expect(txCount()).toBe(2)
+    expect(events.filter(e=>e.type==='tool-end').at(-1)?.payload?.isError).toBe(true)
+    expect(db.prepare('SELECT status FROM pending_clarifications WHERE id=?').get(item.id)).toEqual({status:'open'})
+    const {describeImportException,resolveImportException}=await import('../src/main/domain/import-exceptions')
+    const original=describeImportException(db,item.id)!
+    expect(original.missingFields).toEqual(['amountCents','txType','occurredAt','accountId'])
+    const accountId=(db.prepare("SELECT id FROM accounts WHERE name='银行卡'").get() as {id:number}).id
+    const categoryId=(db.prepare("SELECT id FROM categories WHERE name='餐饮' AND kind='expense'").get() as {id:number}).id
+    resolveImportException(db,{gateId:item.id,expectedVersion:original.version,fields:{amountCents:1500,txType:'expense',occurredAt:'2026-09-03 12:00:00',accountId,categoryId}},{sessionId:'synthetic-panel',via:'panel'})
     expect(txCount()).toBe(3)
     const imp2 = db.prepare("SELECT status FROM imports WHERE source_type='csv'").get() as { status: string }
     expect(imp2.status).toBe('confirmed') // 全部办结才收口

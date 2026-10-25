@@ -78,6 +78,16 @@ function summarize(db: Database, gate: GateRow): BatchResultSummaryDTO | null {
       .get(plan.batchId) as { n: number }
   ).n
 
+  // 只读当前待办归属；没有派生过待办的历史已关闭门才退回原plan口径。
+  const exceptionRows = db.prepare("SELECT payload,status FROM pending_clarifications WHERE field IN ('batch_item','transfer_account')").all() as {payload:string;status:string}[]
+  const own = exceptionRows.filter(r => {
+    try {
+      const p = JSON.parse(r.payload) as {batchId?:unknown;importId?:unknown}
+      return p.batchId === plan.batchId || p.importId === plan.importId
+    } catch { return false }
+  })
+  const unparsed = own.length > 0 ? own.filter(r => r.status === 'open').length : (plan.unparsedCount ?? 0)
+
   return {
     gateId: gate.id,
     batchId: plan.batchId,
@@ -88,7 +98,7 @@ function summarize(db: Database, gate: GateRow): BatchResultSummaryDTO | null {
       needsCategory,
       excluded: plan.skippedCount ?? 0,
       duplicates: plan.duplicateCount ?? 0,
-      unparsed: plan.unparsedCount ?? 0,
+      unparsed,
     },
     duplicatesRows: duplicateRows(plan.items ?? []),
     // D-03b 未实现：按方案不计收支的行明细后端还拿不到，显式 null（UI 必须自己说明）

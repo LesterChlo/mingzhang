@@ -1,21 +1,11 @@
-// 待决卡片（§2.2 统一骨架 + §3.1 五种类型）。
-//
-// 骨架固定五段：类型色圆点 / 头部 12px（类型 · 相对时间 · 状态徽标）/ 主体 / **依据行** / 动作区。
-// 「依据」行永远存在（解析类卡片引用原话或来源附件），这是信任机制的具象。
-//
-// 动作通道映射（只用既有 IPC，不新增）：
-//   confirm_record → confirmRecord(txId[, category]) · answerPending（补分类即入账）· editTx（改内联分类）
-//   delete_confirm  → confirmGate / cancelGate
-//   batch_confirm   → confirmGate / cancelGate（明细逐行来自 card.items）
-//   batch_item      → answerPending（补金额）
-//   其他字段        → cancelGate（忽略；transfer_account 后端拒绝作答，不给假按钮）
-// 每个动作执行后由 store 统一 refresh —— 界面不会「点了不动」。
+// 待决卡片：导入异常与转账经原行结构化续办，普通确认门行为保持。
 
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type { BatchGateCardData, DeleteGateCardData, PendingItemDTO } from '../../../shared/types'
 import { useInbox } from '../shell/inboxStore'
 import { money, relTime, txTypeLabel } from '../lib/shellFormat'
+import {ImportExceptionForm} from './ImportExceptionForm'
 
 type Tone = 'green' | 'yellow' | 'blue' | 'red' | 'gray'
 
@@ -61,10 +51,9 @@ function askLine(question: string): string {
 }
 
 export function QueueCard({ item }: { item: PendingItemDTO }): ReactElement {
-  const { gateCards, details, busy, runExec, runAnswer } = useInbox()
-  const [answer, setAnswer] = useState('')
+  const { gateCards, details, busy, runExec, refresh } = useInbox()
   const [showBatchItems, setShowBatchItems] = useState(false)
-  const meta = metaOf(item.field)
+  const meta = item.field==='batch_item' ? {tone:'yellow' as const,label:'待核对 · 导入异常',tag:null} : metaOf(item.field)
   const gate = gateCards.find((g) => g.gateId === item.gateId)
   const card = gate?.card
   const detail = item.txId != null ? details[item.txId] : undefined
@@ -181,36 +170,12 @@ export function QueueCard({ item }: { item: PendingItemDTO }): ReactElement {
           <div className="mz-meta-line">{item.question}</div>
         ))}
 
-      {item.field === 'batch_item' && (
-        <>
-          <div className="mz-meta-line">{item.question}</div>
-          {item.merchant && <div className="mz-meta-line">{item.merchant}</div>}
-          <div className="mz-field-row">
-            <input
-              className="mz-input"
-              aria-label={`补金额 #${gateId}`}
-              placeholder="金额（可带分类），如 15 餐饮"
-              value={answer}
-              disabled={disabled}
-              onChange={(e) => setAnswer(e.target.value)}
-            />
-            <button
-              type="button"
-              className="mz-btn mz-btn-primary"
-              disabled={disabled || !answer.trim()}
-              onClick={() => {
-                void runAnswer(gateId, answer).then((ok) => {
-                  if (ok) setAnswer('')
-                })
-              }}
-            >
-              补录
-            </button>
-          </div>
-        </>
+      {(item.field==='batch_item'||item.field==='transfer_account')&&(item.importException ?
+        <ImportExceptionForm key={`${gateId}-${item.importException.version}`} value={item.importException} disabled={disabled}/> :
+        <div className="mz-meta-line" role="alert">{item.question}<p>这条原待办暂时无法读取，未做任何补录。</p><button className="mz-btn mz-btn-ghost" type="button" onClick={()=>void refresh()}>刷新待办</button></div>
       )}
 
-      {(item.field === 'transfer_account' || item.field === 'note' || item.field === 'other') && (
+      {(item.field === 'note' || item.field === 'other') && (
         <div className="mz-meta-line">{item.question}</div>
       )}
 

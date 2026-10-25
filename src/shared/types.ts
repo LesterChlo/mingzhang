@@ -373,7 +373,49 @@ export interface SettingsInfoDTO {
   uiFallbackWaitMs: number
 }
 
+export type ImportExceptionField = 'amountCents' | 'txType' | 'occurredAt' | 'accountId' | 'toAccountId'
+export type ImportExceptionTxType = 'expense' | 'income' | 'transfer' | 'adjustment'
+
+export interface ImportExceptionDTO {
+  gateId: number
+  version: string
+  missingFields: ImportExceptionField[]
+  values: {
+    amountCents: number | null
+    txType: ImportExceptionTxType | null
+    occurredAt: string | null
+    accountId: number | null
+    toAccountId: number | null
+    categoryId: number | null
+  }
+  source: {
+    batchId: string | null
+    importId: number | null
+    tableId: number | null
+    rowNo: number | null
+    sourceText: string | null
+    merchant: string | null
+    accountName: string | null
+  }
+  reason: string
+}
+
+export interface ResolveImportExceptionInput {
+  gateId: number
+  expectedVersion: string
+  fields: {
+    amountCents?: number
+    txType?: ImportExceptionTxType
+    occurredAt?: string
+    accountId?: number
+    toAccountId?: number
+    categoryId?: number
+  }
+}
+
 export interface PendingItemDTO {
+  revision?: number
+  importException?: ImportExceptionDTO | null
   gateId: number
   field: string
   question: string
@@ -571,6 +613,8 @@ export interface MingZhangApi {
   editTx: (txId: number, op: TxEditOp) => Promise<ExecResult>
   listCategories: () => Promise<{ id: number; name: string; kind: string }[]>
   listPending: () => Promise<PendingItemDTO[]>
+  getImportException: (gateId: number) => Promise<ImportExceptionDTO | null>
+  resolveImportException: (input: ResolveImportExceptionInput) => Promise<{txId:number;card:TransactionCardData;text:string}>
   /** 账户列表（账户屏 + 账本屏账户筛选下拉）。不含余额——accounts 表无期初余额列。 */
   listAccounts: () => Promise<AccountOption[]>
   /** 月报：传 'YYYY-MM' 取该月；不传取上一个自然月（收件箱右栏「上月对照」靠这条）。 */

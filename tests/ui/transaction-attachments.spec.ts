@@ -78,7 +78,7 @@ test('deep/light narrow panel real wheel reaches attachments; deleted controls a
   const panel=page.getByTestId('ledger-detail'),box=await panel.boundingBox();expect(box).not.toBeNull()
   await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);await page.mouse.wheel(0,400)
   await expect.poll(()=>page.getByTestId('ledger-attachment-add').evaluate(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})).toBe(true)
-  expect(await panel.evaluate(e=>e.scrollTop)).toBeGreaterThan(0)
+  await expect.poll(()=>panel.evaluate(e=>e.scrollTop)).toBeGreaterThan(0)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(0)
  }
  await sql("UPDATE transactions SET state='deleted' WHERE id=1")

@@ -19,6 +19,7 @@ const api: MingZhangApi = {
   confirmGate: (gateId) => ipcRenderer.invoke('mz:confirmGate', gateId),
   cancelGate: (gateId) => ipcRenderer.invoke('mz:cancelGate', gateId),
   editTx: (txId, op) => ipcRenderer.invoke('mz:editTx', txId, op),
+  getTransactionEditForm: (txId) => ipcRenderer.invoke('mz:getTransactionEditForm', txId),
   listCategories: () => ipcRenderer.invoke('mz:listCategories'),
   listPending: () => ipcRenderer.invoke('mz:listPending'),
   listAccounts: () => ipcRenderer.invoke('mz:listAccounts'),

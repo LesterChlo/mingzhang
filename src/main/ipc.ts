@@ -4,6 +4,7 @@ import { ipcMain, nativeTheme, type WebContents } from 'electron'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import type { AppConfigDTO, LedgerFilter, ThemeName, TxEditOp } from '../shared/types'
 import { normalizeTheme, type ConfigStore, type AppConfig } from './config/store'
+import { getTransactionEditForm } from './domain/transaction-date-type'
 import type { SecretsStore } from './secrets/store'
 import type { Engine } from './engine/engine'
 import type { EngineRegistry } from './engine/registry'
@@ -205,6 +206,10 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
   ipcMain.handle('mz:confirmGate', (_e, gateId: number) => ctx.engines.get().confirmGate(gateId))
   ipcMain.handle('mz:cancelGate', (_e, gateId: number) => ctx.engines.get().cancelGate(gateId))
   ipcMain.handle('mz:editTx', (_e, txId: number, op: TxEditOp) => ctx.engines.get().editTx(txId, op))
+  ipcMain.handle('mz:getTransactionEditForm', (_e, txId: number) => {
+    const db = ctx.getDb()
+    return db ? getTransactionEditForm(db, txId) : null
+  })
 
   ipcMain.handle('mz:listCategories', () => {
     const db = ctx.getDb()

@@ -75,8 +75,31 @@ export interface ChatEvent {
   payload?: any
 }
 
+/** 单笔编辑表单只读快照；version 是主进程生成的不透明并发令牌。 */
+export interface TransactionEditFormDTO {
+  txId: number
+  version: string
+  occurredAt: string
+  txType: 'expense' | 'income' | 'transfer' | 'adjustment'
+  state: string
+  categoryId: number | null
+  accountId: number
+  toAccountId: number | null
+}
+
+export interface TransactionDateTypeEditInput {
+  txId: number
+  expectedVersion: string
+  fields: {
+    occurredAt?: string
+    txType?: 'expense' | 'income'
+    categoryId?: number | null
+  }
+}
+
 /** 第 6 单 段4-2：详情抽屉动作组——对某一笔直接动手的入参（全部 changed_by='user' + 审计）。 */
 export type TxEditOp =
+  | { op: 'dateType'; expectedVersion: string; fields: TransactionDateTypeEditInput['fields'] }
   | {
       op: 'set'
       fields: { categoryName?: string; amountCents?: number; merchant?: string; note?: string; accountName?: string }
@@ -569,6 +592,7 @@ export interface MingZhangApi {
   cancelGate: (gateId: number) => Promise<ExecResult>
   /** 段4-2：详情抽屉动作组——改字段 / 删除 / 恢复 / 补转账账户（均 changed_by='user' + 审计）。 */
   editTx: (txId: number, op: TxEditOp) => Promise<ExecResult>
+  getTransactionEditForm: (txId: number) => Promise<TransactionEditFormDTO | null>
   listCategories: () => Promise<{ id: number; name: string; kind: string }[]>
   listPending: () => Promise<PendingItemDTO[]>
   /** 账户列表（账户屏 + 账本屏账户筛选下拉）。不含余额——accounts 表无期初余额列。 */

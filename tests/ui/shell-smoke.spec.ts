@@ -737,18 +737,23 @@ test.describe('账本（真实数据）', () => {
     await page.getByTestId('ledger-clear-all').click()
   })
 
-  test('账本⑤ 待后端项是诚实的禁用态：日期/类型/拆账/标记不计收支', async () => {
+  test('账本⑤ 日期/类型有真实编辑入口，其余缺口保持诚实禁用', async () => {
     // ④ 已经选中了这行，而行点击是**开关式**（再点一次取消选中），所以这里只在
     // 详情栏没开时才点——否则会把刚开的面板又关掉。
     if ((await page.getByTestId('ledger-detail').count()) === 0) {
       await page.locator('[data-testid="ledger-row"]').first().click()
     }
+    await expect(page.getByTestId('ledger-date-type')).toHaveAttribute('aria-busy', 'false')
+    await expect(page.getByTestId('ledger-edit-date')).toBeEnabled()
+    await expect(page.getByTestId('ledger-edit-direction')).toBeEnabled()
+    await expect(page.getByTestId('ledger-todo-date')).toHaveCount(0)
+    await expect(page.getByTestId('ledger-todo-type')).toHaveCount(0)
     const todo = page.getByTestId('ledger-backend-todo')
     await expect(todo).toBeVisible()
-    for (const id of ['date', 'type', 'split', 'adjust']) {
+    for (const id of ['split', 'adjust']) {
       await expect(page.getByTestId(`ledger-todo-${id}`)).toBeDisabled()
     }
-    // 原因逐条写清，不给假按钮
+    // 剩余缺口仍逐条说明；日期/类型已由本单的真实通道接走。
     await expect(todo).toContainText('待后端')
   })
 

@@ -16,7 +16,7 @@ export function TransactionDateTypeEditor({ txId, revision, disabled, onBusyChan
   revision: TxDetailDTO
   disabled: boolean
   onBusyChange: (busy: boolean) => void
-  onSaved: () => Promise<void>
+  onSaved: (message: string) => Promise<void>
 }): ReactElement {
   const { categories } = useInbox()
   const [form, setForm] = useState<TransactionEditFormDTO | null>(null)
@@ -88,7 +88,7 @@ export function TransactionDateTypeEditor({ txId, revision, disabled, onBusyChan
       const result = await window.mz.editTx(txId, { op: 'dateType', expectedVersion: form.version, fields })
       if (result.status !== 'ok') throw new Error(result.message)
       if (generation.current === request) setNotice(result.message)
-      await onSaved()
+      await onSaved(result.message)
     } catch (e) {
       // Keep the draft and its original version. Never refresh/rebase and replay a rejected write.
       if (generation.current === request) setError(humanError(e))

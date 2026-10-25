@@ -137,7 +137,9 @@ export function LedgerDetail({
     [busy, txId, load, onChanged, onNotice, showFlash],
   )
 
-  const afterDateSaved = useCallback(async (): Promise<void> => {
+  const afterDateSaved = useCallback(async (message: string): Promise<void> => {
+    // Filters may unmount this detail after reload; the shell owns the lasting receipt.
+    onNotice(message, 'ok')
     await load()
     onChanged()
     void refresh().catch(() => onNotice('已保存，待办刷新失败，请重新读取。', 'info'))

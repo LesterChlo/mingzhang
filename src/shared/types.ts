@@ -468,6 +468,31 @@ export interface AccountOption {
   createdAt: string
 }
 
+export interface CreateAccountInput {
+  name: string
+  type: 'cash' | 'bank' | 'alipay' | 'wechat'
+}
+export interface RenameAccountInput {
+  accountId: number
+  expectedName: string
+  newName: string
+}
+export interface CreateCategoryInput {
+  name: string
+  kind: 'expense' | 'income'
+}
+export interface RenameCategoryInput {
+  categoryId: number
+  expectedName: string
+  newName: string
+}
+
+/** 账户本月已记流水：只含 confirmed 收支，无期初信息，不能当余额。 */
+export interface AccountSummaryDTO {
+  month: string
+  accounts: Array<AccountOption & { expenseCents: number; incomeCents: number; count: number }>
+}
+
 export interface LedgerPageDTO {
   items: LedgerRow[]
   total: number
@@ -573,6 +598,14 @@ export interface MingZhangApi {
   listPending: () => Promise<PendingItemDTO[]>
   /** 账户列表（账户屏 + 账本屏账户筛选下拉）。不含余额——accounts 表无期初余额列。 */
   listAccounts: () => Promise<AccountOption[]>
+  /** 本地自然月 confirmed 收支流水，纯读，不含余额。非法月份与账本未就绪均拒绝。 */
+  getAccountSummary: (month?: string) => Promise<AccountSummaryDTO>
+  createAccount: (input: CreateAccountInput) => Promise<number>
+  /** 按 ID + 显示的原名称校验过期；成功与审计原子提交。 */
+  renameAccount: (input: RenameAccountInput) => Promise<void>
+  createCategory: (input: CreateCategoryInput) => Promise<number>
+  /** 同方向习惯同步改名；无方向歧义旧习惯须先处理。 */
+  renameCategory: (input: RenameCategoryInput) => Promise<void>
   /** 月报：传 'YYYY-MM' 取该月；不传取上一个自然月（收件箱右栏「上月对照」靠这条）。 */
   latestReport: (month?: string) => Promise<ReportCardData | null>
   /** 报告屏历史月份网格：近 N 个月（含空月，从早到晚）。不传 N = 12。非法 N 由主进程报错。 */

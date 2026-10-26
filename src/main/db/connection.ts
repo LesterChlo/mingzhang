@@ -5,7 +5,8 @@
 
 import DatabaseCtor from 'better-sqlite3-multiple-ciphers'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import { existsSync, lstatSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync } from 'node:fs'
+import { basename, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { SecretsStore } from '../secrets/store'
 import schemaSql from './schema.sql?raw'
@@ -19,9 +20,41 @@ const CIPHER = 'chacha20'
 /** SQLite 在主库文件旁产生的附属文件；主库缺失时它们代表崩溃残留，不得当成首次启动。 */
 const SIDECAR_SUFFIXES = ['-wal', '-shm', '-journal']
 
+/** 恢复前的只读密钥预检：任何既有账本/sidecar/恢复痕迹均不得以缺钥身份进入文件恢复。 */
+export function readStartupDek(dbFile: string, secrets: SecretsStore): string | null {
+  const dek = secrets.get(DB_KEY_FILE)
+  if (dek) {
+    if (!/^[0-9a-f]{64}$/i.test(dek)) {
+      throw new Error('账本密钥格式无效：拒绝自动恢复，请保留原账本、密钥与恢复文件并检查安全存储。')
+    }
+    return dek
+  }
+  if (typeof secrets.has !== 'function' || secrets.has(DB_KEY_FILE)) {
+    throw new Error('账本密钥已存在但无法读取或无法确认其状态：拒绝自动恢复，请保留原账本、密钥与恢复文件并检查安全存储。')
+  }
+  const dir = dirname(dbFile)
+  const base = basename(dbFile)
+  const restorePrefix = `${base}.restore-`
+  const hasEvidence = existsSync(dbFile) || SIDECAR_SUFFIXES.some((suffix) => existsSync(`${dbFile}${suffix}`)) ||
+    (existsSync(dir) && readdirSync(dir).some((name) => process.platform === 'win32'
+      ? name.toLowerCase().startsWith(restorePrefix.toLowerCase())
+      : name.startsWith(restorePrefix)))
+  if (hasEvidence) {
+    throw new Error('已有账本或恢复痕迹但密钥缺失：拒绝生成新密钥或自动恢复，请保留原账本与恢复文件并找回原密钥。')
+  }
+  return null // 纯首启不在此造钥；仍由 openLedger 的首次启动守卫负责创建。
+}
+
 export function loadOrCreateDek(secrets: SecretsStore): string {
   const existing = secrets.get(DB_KEY_FILE)
   if (existing) return existing
+  // get(null) 也可能是解密失败；只有能够确认密钥文件不存在，才允许生成。
+  if (typeof secrets.has !== 'function') {
+    throw new Error('无法确认账本密钥是否已存在：拒绝生成新密钥，请保留原密钥并检查安全存储。')
+  }
+  if (secrets.has(DB_KEY_FILE)) {
+    throw new Error('账本密钥文件已存在但无法读取：拒绝覆盖原密钥，请保留账本与密钥并检查原机器、账户或安全存储。')
+  }
   const dek = randomBytes(32).toString('hex')
   secrets.set(DB_KEY_FILE, dek)
   return dek
@@ -69,7 +102,11 @@ export function openLedger(dbFile: string, secrets: SecretsStore): Database {
       throw new Error('已存在的账本文件为空或不是普通文件：拒绝启动（绝不补成新空账本，请人工核对）。')
     }
   }
-  const dek = loadOrCreateDek(secrets)
+  // 既有账本绝不补钥；缺钥/解密失败必须在打开 SQLite（含 sidecar 写入）之前拒绝。
+  const dek = existed ? secrets.get(DB_KEY_FILE) : loadOrCreateDek(secrets)
+  if (!dek) {
+    throw new Error('已存在账本的密钥缺失或无法读取：拒绝生成新密钥，请保留原账本与密钥并检查原机器、账户或安全存储。')
+  }
   const db = new DatabaseCtor(dbFile)
   try {
     // 打开/解密探测。note: 损坏或非数据库文件上 **PRAGMA 本身就会先抛**

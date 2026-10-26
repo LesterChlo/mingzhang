@@ -11,6 +11,8 @@ import { PROVIDER_PRESETS, testConnection, visionCheck, type ProviderProbeInput 
 import { parseSessionHistory } from './history'
 import { buildOpenGateCards } from './domain/gates'
 import { stageBill } from './domain/bill'
+import { describeImportException, resolveImportException, confirmImportExceptionRecord } from './domain/import-exceptions'
+import type { ResolveImportExceptionInput } from '../shared/types'
 import { firstAttachmentRef } from './domain/pending'
 import { previousMonth } from './domain/queries'
 import {
@@ -182,9 +184,11 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
   //  它与 mz:testConnection 完全同签名，留着只会让人以为"编辑模式要走这条"；
   //  编辑模式的空 Key 回落已由上面 mz:testConnection 一并处理。）
 
-  ipcMain.handle('mz:confirmRecord', (_e, txId: number, categoryName?: string) =>
-    ctx.engines.get().confirmRecord(txId, categoryName),
-  )
+  ipcMain.handle('mz:confirmRecord', async (_e, txId: number, categoryName?: string) => {
+    const db = ctx.getDb()
+    const originalImport = db ? confirmImportExceptionRecord(db, txId, categoryName) : null
+    return originalImport ?? ctx.engines.get().confirmRecord(txId, categoryName)
+  })
 
   // 第 8 单：账单材料逐行入库（渲染层只负责把表格拆成二维数组，之后由 Agent 读、程序套表解析）
   ipcMain.handle(
@@ -225,6 +229,18 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     if (!db) throw new Error('账本未就绪')
     const { answerPending } = await import('./domain/pending-answer')
     return answerPending(db, gateId, answer, { sessionId: ctx.engines.get().sessionId, via: 'panel' })
+  })
+
+  ipcMain.handle('mz:getImportException', (_e, gateId: number) => {
+    if (!Number.isSafeInteger(gateId) || gateId <= 0) throw new Error('待办ID无效')
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return describeImportException(db, gateId)
+  })
+  ipcMain.handle('mz:resolveImportException', (_e, input: ResolveImportExceptionInput) => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return resolveImportException(db, input, {sessionId:'ui-import-exception', via:'panel'})
   })
 
   ipcMain.handle('mz:txDetail', (_e, txId: number) => {
@@ -282,8 +298,8 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     const db = ctx.getDb()
     if (!db) return []
     const rows = db
-      .prepare("SELECT id, field, question, tx_id, created_at, payload FROM pending_clarifications WHERE status='open' ORDER BY id DESC")
-      .all() as unknown as { id: number; field: string; question: string; tx_id: number | null; created_at: string; payload: string | null }[]
+      .prepare("SELECT id, field, question, tx_id, created_at, payload, revision FROM pending_clarifications WHERE status='open' ORDER BY id DESC")
+      .all() as unknown as { id: number; field: string; question: string; tx_id: number | null; created_at: string; payload: string | null; revision: number }[]
     // 交易摘要：一次按 tx_id 批量查 transactions（无 txId 事项保持原样不填）
     const txIds = [...new Set(rows.map((r) => r.tx_id).filter((v): v is number => v !== null))]
     const txMap = new Map<number, { merchant: string | null; amountCents: number; occurredAt: string }>()
@@ -310,6 +326,8 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
       const tx = r.tx_id !== null ? txMap.get(r.tx_id) : undefined
       return {
         gateId: r.id,
+        revision: r.revision,
+        importException: describeImportException(db, r.id),
         field: r.field,
         question: r.question,
         txId: r.tx_id,

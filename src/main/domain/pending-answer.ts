@@ -40,10 +40,8 @@ export function answerPending(
   const ans = answer.trim()
   if (!ans) throw new Error('回答不能为空')
 
-  if (row.field === 'transfer_account') {
-    throw new Error(
-      '这笔转账缺转入/转出账户：请在对话里说「把这笔转账记为 从<转出账户>到<转入账户> ¥X」，我会用记账工具补上（转账需要两个账户才能入账）；补记后到待办点「忽略」关掉这条即可。',
-    )
+  if (row.field === 'transfer_account' || (row.field === 'batch_item' && JSON.parse(row.payload).exceptionVersion !== undefined)) {
+    throw new Error('请在这笔原待办界面结构化补齐缺失字段；转账选择真实的转出账户和转入账户，保留原金额。不能通过对话补答、另记一笔或忽略原待办代替。')
   }
 
   if (row.field === 'confirm_record' && row.tx_id) {
@@ -71,7 +69,7 @@ export function answerPending(
   if (row.field === 'batch_item') {
     // 批次缺金额项补答：答案 = 金额（可带分类）→ 创建交易继续
     const { txId, card } = resolveBatchItem(db, row.id, ans, opts.sessionId, opts.expectedRevision)
-    return { text: `已按补充金额入账 #${txId}（confirmed）。`, card }
+    return { text: card.tx.state === 'confirmed' ? `已按补充金额入账 #${txId}（confirmed）。` : `原行已补录 #${txId}（${card.tx.state}），仍需选择分类后确认。`, card }
   }
 
   // 其他自由字段：关闭并留痕

@@ -13,7 +13,7 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { mkdtempSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { makeWechatXlsxBuffer } from '../xlsx-fixture'
+import { makeWechatXlsxBuffer, makeKnownAccountWechatXlsxBuffer } from '../xlsx-fixture'
 import { startFakeProvider } from '../fake-provider'
 import { confirmSingleRecord } from './single-record-fixture'
 
@@ -510,12 +510,16 @@ test.describe('收件箱（真实数据）', () => {
     await today.locator('button').click() // 收回，保持用例可重复
   })
 
-  test('收件箱④ 待核对卡就地补答：answerPending 通道真通，队列清空回空态', async () => {
+  test('收件箱④ 原行结构化补录：明确缺项后队列清空回空态', async () => {
     const rest = page.locator('[data-testid="inbox-card"][data-kind="batch_item"]')
     await expect(rest).toBeVisible()
 
-    await rest.getByLabel(/补金额/).fill('15 餐饮')
-    await rest.getByRole('button', { name: '补录' }).click()
+    await rest.getByTestId('exception-amount').fill('15')
+    if(await rest.getByTestId('exception-type').count()) await rest.getByTestId('exception-type').selectOption('expense')
+    if(await rest.getByTestId('exception-date').count()) await rest.getByTestId('exception-date').fill(new Date().toISOString().slice(0,10))
+    if(await rest.getByTestId('exception-account').count()) await rest.getByTestId('exception-account').selectOption({label:'银行卡'})
+    await rest.getByTestId('exception-category').selectOption({label:'餐饮'})
+    await rest.getByTestId('exception-submit').click()
 
     // 补答后队列清空，回到空态；角标与待决数一起归零
     await expect(page.getByTestId('inbox-card')).toHaveCount(0)
@@ -551,7 +555,7 @@ test.describe('收件箱（真实数据）', () => {
     await expect(page.getByTestId('inbox-empty')).toBeVisible()
   })
 
-  test('收件箱⑥ 转账缺账户卡：如实显示原因，只给「忽略」，不给假按钮', async () => {
+  test('收件箱⑥ 转账缺账户卡：提供原行真实补录，不给自由答案假按钮', async () => {
     // 离线演示剧本：含转账的批次 → 确认入账后，零钱通那笔缺转出/转入账户 → transfer_account 待办
     const cap = page.getByLabel('速记行')
     await cap.fill('账单里有零钱通转入')
@@ -565,9 +569,12 @@ test.describe('收件箱（真实数据）', () => {
     await expect(tr).toBeVisible()
     await expect(tr).toContainText('待补账户')
     await expect(tr.getByTestId('inbox-basis')).toContainText('依据：')
-    // 后端对转账待办拒绝「就地作答」，所以不该出现补录框或确认按钮
+    // Versioned exception uses the structured original-row API, not free-text answerPending.
     await expect(tr.getByTestId('inbox-confirm')).toHaveCount(0)
     await expect(tr.getByLabel(/补金额/)).toHaveCount(0)
+    await expect(tr.getByTestId('exception-form')).toBeVisible()
+    await expect(tr.getByTestId('exception-submit')).toBeVisible()
+    await expect(tr.getByTestId('exception-to-account')).toBeVisible()
     await expect(tr.getByRole('button', { name: '忽略' })).toBeVisible()
 
     // 忽略即关闭这条待办
@@ -1138,7 +1145,7 @@ test.describe('批次结果条（真实数据）', () => {
     await barPage.getByTestId('nav-inbox').click()
     const capture = barPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await barPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)
@@ -1368,7 +1375,7 @@ test.describe('助手面板与归类映射表（②B 真实数据）', () => {
     await panelPage.getByTestId('nav-inbox').click()
     const capture = panelPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await panelPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)

@@ -17,10 +17,10 @@ function mkDb() {
 }
 
 const ITEMS = [
-  { merchant: 'Apple', amount_cents: 500, tx_type: 'expense' as const, source_text: 'Apple -5.00' },
-  { merchant: '京东', amount_cents: 15900, tx_type: 'expense' as const, category_name: '购物' },
-  { merchant: '零钱通转入', amount_cents: 10152, tx_type: 'transfer' as const, source_text: '零钱通转入 101.52' },
-  { merchant: '美团', amount_cents: 990, tx_type: 'expense' as const, category_name: '餐饮' },
+  { merchant: 'Apple', amount_cents: 500, tx_type: 'expense' as const, source_text: 'Apple -5.00', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
+  { merchant: '京东', amount_cents: 15900, tx_type: 'expense' as const, category_name: '购物', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
+  { merchant: '零钱通转入', amount_cents: 10152, tx_type: 'transfer' as const, source_text: '零钱通转入 101.52', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
+  { merchant: '美团', amount_cents: 990, tx_type: 'expense' as const, category_name: '餐饮', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
 ]
 
 describe('批次执行 · 转账条目回归', () => {
@@ -84,7 +84,7 @@ describe('批次执行 · 转账条目回归', () => {
       sourceType: 'screenshot',
       sessionId: 's1',
       items: [
-        { merchant: '买菜', amount_cents: 2000, tx_type: 'expense', category_name: '餐饮' },
+        { merchant: '买菜', amount_cents: 2000, tx_type: 'expense', category_name: '餐饮', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
       ],
     })
     const result = executeBatch(db, gateId)

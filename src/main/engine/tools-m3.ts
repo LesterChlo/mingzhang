@@ -36,6 +36,8 @@ export function createM3Tools(deps: M3Deps): ToolDefinition[] {
           occurred_at: Type.Optional(Type.String({ description: 'ISO-8601 本地时间' })),
           category_name: Type.Optional(Type.String()),
           note: Type.Optional(Type.String()),
+          account_name: Type.Optional(Type.String({ description: '材料明确提供的原账户名，缺失不要猜' })),
+          to_account_name: Type.Optional(Type.String({ description: '转账的原转入账户名，缺失不要猜' })),
           reliable_id: Type.Optional(Type.String({ description: '材料里的可靠交易号/流水号' })),
           source_text: Type.Optional(Type.String({ description: '该条原始文本（给缺金额项留证据）' })),
         }),
@@ -51,6 +53,8 @@ export function createM3Tools(deps: M3Deps): ToolDefinition[] {
         occurred_at: it.occurred_at ?? null,
         category_name: it.category_name ?? null,
         note: it.note ?? null,
+        account_name: it.account_name ?? null,
+        to_account_name: it.to_account_name ?? null,
         reliable_id: it.reliable_id ?? null,
         source_text: it.source_text ?? null,
       }))

@@ -5,6 +5,7 @@
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { nowIso } from '../db/time'
 
 interface ChatMessage {
   role: string
@@ -77,9 +78,11 @@ function billColumns(msgs: ChatMessage[]): {
   const merchant = pick(/交易对方|商户|商品/)
   const id = pick(/交易单号|流水号|订单号|单号/)
   const direction = pick(/收\/支|收支|收-支/)
+  const account = pick(/^(支付方式|收\/付款方式|支付账户|付款账户|账户(?:名|名称)?)$/)
   if (merchant) columns.merchant = merchant
   if (id) columns.id = id
   if (direction) columns.direction = direction
+  if (account) columns.account = account
   const fileM = /来源文件「(.*?)」/.exec(t)
   const file = fileM?.[1] ?? ''
   const channel = /微信/.test(file + t) ? '微信支付' : /支付宝/.test(file + t) ? '支付宝' : null
@@ -190,6 +193,41 @@ export function decide(
     if (b) {
       const args: Record<string, unknown> = { table_id: b.tableId, columns: b.columns }
       if (b.channel) args.channel = b.channel
+      if (b.columns.account) {
+        // 账户只认原表完整单元格，不用包含映射（「零钱通」「未知银行卡」不能冒充已知账户）。
+        // 先读完本表，再逐行给显式账户；未识别值仍由原表预检拒绝，空白仍是缺账户待办。
+        const more = /^（还有第 (\d+) 行起的 \d+ 行没看，继续 read_bill）$/m.exec(toolResult)
+        if (more) {
+          return { kind: 'tool', name: 'read_bill', args: { table_id: b.tableId, from_row: Number(more[1]), limit: 200 } }
+        }
+        const accounts = new Map([
+          ['零钱', '微信'], ['余额', '支付宝'],
+          ['微信', '微信'], ['支付宝', '支付宝'], ['现金', '现金'], ['银行卡', '银行卡'],
+        ])
+        const rowOverrides: { rows: number[]; account_name: string }[] = []
+        for (let i = messages.length - 1; i >= 0 && messages[i].role !== 'user'; i--) {
+          const msg = messages[i]
+          if (msg.role !== 'tool') continue
+          const text = typeof msg.content === 'string' ? msg.content : msg.content.map((p) => p.text ?? '').join('')
+          if (!text.startsWith(`材料 #${b.tableId}（`)) continue
+          const headers = [...text.matchAll(/^表头：(.*)$/gm)]
+          if (headers.length !== 1) continue
+          const header = headers[0][1].split(' | ')
+          const accountIndex = header.indexOf(b.columns.account)
+          if (accountIndex < 0) continue
+          const range = /^第 (\d+)–(\d+) 行：$/m.exec(text)
+          const rows = [...text.matchAll(/^(\d+)\| (.*)$/gm)]
+          // 换行也可能伪造行号；行数、连续行号及列数都对上才解释这一页。
+          if (!range || rows.length !== Number(range[2]) - Number(range[1]) + 1 ||
+            rows.some((r, n) => Number(r[1]) !== Number(range[1]) + n || r[2].split(' | ').length !== header.length)) continue
+          for (const match of rows) {
+            const cells = match[2].split(' | ')
+            const account_name = accounts.get(cells[accountIndex].trim())
+            if (account_name) rowOverrides.push({ rows: [Number(match[1])], account_name })
+          }
+        }
+        if (rowOverrides.length) args.row_overrides = rowOverrides
+      }
       if (b.columns.direction) {
         // 演示用确定性口径：微信账单里 收/支 为「不计收支」或「/」的行都不算账
         args.skip_when = [
@@ -272,9 +310,9 @@ export function decide(
         source_type: 'csv',
         channel: '演示渠道',
         items: [
-          { amount_cents: 2000, tx_type: 'expense', merchant: '演示打车', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-t1`, occurred_at: null, category_name: '交通' },
-          { amount_cents: 10152, tx_type: 'transfer', merchant: '零钱通转入', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t2`, source_text: '零钱通转入 101.52' },
-          { amount_cents: 800, tx_type: 'expense', merchant: '演示早餐', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t3`, occurred_at: null, category_name: '餐饮' },
+          { amount_cents: 2000, tx_type: 'expense', merchant: '演示打车', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-t1`, occurred_at: nowIso(), account_name: '微信', category_name: '交通' },
+          { amount_cents: 10152, tx_type: 'transfer', merchant: '零钱通转入', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t2`, source_text: '零钱通转入 101.52', occurred_at: nowIso(), account_name: '微信' },
+          { amount_cents: 800, tx_type: 'expense', merchant: '演示早餐', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t3`, occurred_at: nowIso(), account_name: '微信', category_name: '餐饮' },
         ],
       },
     }
@@ -288,8 +326,8 @@ export function decide(
         source_type: 'csv',
         channel: '演示渠道',
         items: [
-          { amount_cents: 1200, tx_type: 'expense', merchant: '演示甲', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-001`, occurred_at: null, category_name: '购物' },
-          { amount_cents: 3400, tx_type: 'expense', merchant: '演示乙', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-002`, occurred_at: null, category_name: '餐饮' },
+          { amount_cents: 1200, tx_type: 'expense', merchant: '演示甲', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-001`, occurred_at: nowIso(), account_name: '微信', category_name: '购物' },
+          { amount_cents: 3400, tx_type: 'expense', merchant: '演示乙', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-002`, occurred_at: nowIso(), account_name: '微信', category_name: '餐饮' },
           { merchant: '演示丙（金额缺失）', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-003`, source_text: '演示丙，金额看不清' },
         ],
       },

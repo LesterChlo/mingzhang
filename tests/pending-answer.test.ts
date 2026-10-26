@@ -82,7 +82,8 @@ describe('answerPending（第 4 单 A：就地回答 = 对话补答同路径）'
       sessionId: 's1',
       field: 'batch_item',
       question: '金额待补：演示丙',
-      payload: { importId, merchant: '演示丙', attachments: ['att-1.png'] },
+      // Complete legacy provenance is required; unknown original values must not be guessed.
+      payload: { importId, batchId: 'msg-b1', txType: 'expense', occurredAt: '2026-10-08 09:15:00', accountName: '银行卡', merchant: '演示丙', attachments: ['att-1.png'] },
     })
     const before = (db.prepare('SELECT COUNT(*) n FROM transactions').get() as { n: number }).n
     const r = answerPending(db, gateId, '15 餐饮', { sessionId: 's1', via: 'panel' })

@@ -44,11 +44,11 @@ function prepareMixedBatch(db: ReturnType<typeof openSchemaDb>): { gateId: numbe
     sessionId: 's1',
     skippedCount: 2,
     items: [
-      { merchant: '演示甲', amount_cents: 1200, tx_type: 'expense', category_name: '餐饮' },
-      { merchant: '演示乙', amount_cents: 3400, tx_type: 'expense', category_name: '交通' },
+      { merchant: '演示甲', amount_cents: 1200, tx_type: 'expense', category_name: '餐饮', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
+      { merchant: '演示乙', amount_cents: 3400, tx_type: 'expense', category_name: '交通', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
       // 无分类：常识表也命中不了 → 转 needs_review（= 待分类那一笔）
-      { merchant: '演示丙', amount_cents: 500, tx_type: 'expense' },
-      { merchant: '重复商户', amount_cents: 990, tx_type: 'expense', category_name: '餐饮', reliable_id: 'DUP-1' },
+      { merchant: '演示丙', amount_cents: 500, tx_type: 'expense', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
+      { merchant: '重复商户', amount_cents: 990, tx_type: 'expense', category_name: '餐饮', reliable_id: 'DUP-1', occurred_at: '2026-10-03 10:00:00', account_name: '微信' },
       // 缺金额：转待核对，不入账
       { merchant: '缺金额商户' },
     ],
@@ -136,7 +136,7 @@ describe('批次结果条 · 按批次读回', () => {
       sourceType: 'csv',
       channel: CHANNEL,
       sessionId: 's2',
-      items: [{ merchant: '还没确认的商户', amount_cents: 100, tx_type: 'expense', category_name: '餐饮' }],
+      items: [{ merchant: '还没确认的商户', amount_cents: 100, tx_type: 'expense', category_name: '餐饮', occurred_at: '2026-10-03 10:00:00', account_name: '微信' }],
     })
     expect(open.gateId).toBeGreaterThan(gateId)
 

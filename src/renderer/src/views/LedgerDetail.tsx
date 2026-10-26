@@ -1,27 +1,18 @@
 // 账本屏 · 行详情（规格 §3.2「行详情（右栏）」）。
 //
-// 诚实边界（本单硬约束：只动既有 IPC，不改后端）：
-//   可编辑：金额 / 说明 / 分类 / 账户 → editTx { op:'set' }（改完即存，顶部短暂「已保存」）
-//           账户走契约B（set.fields.accountName 精确匹配账户名，T0928 §5 补上的口子）
-//           转账的转出/转入账户 → editTx { op:'transferAccounts' }
-//           删除 / 恢复        → editTx { op:'delete' | 'restore' }
-//   禁用（后端不支持，标明原因，不做假按钮）：
-//           改日期 / 改类型（editTx set 只接受 分类/金额/说明/备注/账户）
-//           拆账 / 标记不计收支（后端无对应通道，规格 §6）
-//   附件：独立的本地多图列表、添加与移除引用；不调用模型，不删除共享原图。
+// 日期与收支类型：独立版本化 dateType 操作，显式保存并保留原本地时间/时区。
+// 其余既有单字段编辑沿用 set；多附件在本机管理，不调用模型，不删除共享原图。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { AccountOption, TxDetailDTO, TxEditOp } from '../../../shared/types'
 import { useInbox } from '../shell/inboxStore'
 import { STATE_LABELS, humanError, money, stateTone } from '../lib/ledgerFilter'
-import { txTypeLabel } from '../lib/shellFormat'
 import {TransactionAttachments} from './TransactionAttachments'
+import { TransactionDateTypeEditor } from './TransactionDateTypeEditor'
 
 /** 后端不支持的字段——原因逐条写清，禁用态可见（不做假按钮）。 */
 const BACKEND_GAPS: { id: string; label: string; reason: string }[] = [
-  { id: 'date', label: '改日期', reason: 'editTx {op:set} 只接受 分类 / 金额 / 说明 / 备注 / 账户 五个字段，日期不在其中' },
-  { id: 'type', label: '改类型', reason: '同上：交易类型（支出/收入/转账）无写入通道' },
   { id: 'split', label: '拆账', reason: '拆账需要新的域层通道（规格 §6 未提供），本单不改后端' },
   { id: 'adjust', label: '标记不计收支', reason: '标记不计收支（adjustment）无写入通道，本单不改后端' },
 ]
@@ -40,7 +31,7 @@ export function LedgerDetail({
   /** 操作回执（走 §2.5 toast）。 */
   onNotice: (text: string, tone: 'ok' | 'err' | 'info') => void
 }): ReactElement {
-  const { categories } = useInbox()
+  const { categories, refresh } = useInbox()
   const [detail, setDetail] = useState<TxDetailDTO | null>(null)
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -108,6 +99,14 @@ export function LedgerDetail({
     },
     [busy, txId, load, onChanged, onNotice, showFlash],
   )
+
+  const afterDateSaved = useCallback(async (message: string): Promise<void> => {
+    // Filters may unmount this detail after reload; the shell owns the lasting receipt.
+    onNotice(message, 'ok')
+    await load()
+    onChanged()
+    void refresh().catch(() => onNotice('已保存，待办刷新失败，请重新读取。', 'info'))
+  }, [load, onChanged, refresh, onNotice])
 
   if (error && !detail) {
     return (
@@ -313,13 +312,7 @@ export function LedgerDetail({
           </label>
         )}
 
-        <div className="mz-detail-field">
-          <span className="mz-field-lb">日期 / 类型</span>
-          <div className="mz-detail-static mz-num" data-testid="ledger-detail-when">
-            {tx.occurredAt.slice(0, 10)} · {txTypeLabel(tx.type)}
-            <span className="mz-todo-note">两者均只读（后端无写入通道，见下）</span>
-          </div>
-        </div>
+        <TransactionDateTypeEditor txId={tx.id} revision={detail} disabled={busy || deleted} onBusyChange={setBusy} onSaved={afterDateSaved} />
 
         <TransactionAttachments key={tx.id} txId={tx.id} deleted={deleted} onChanged={() => {void load();onChanged()}}/>
       </div>

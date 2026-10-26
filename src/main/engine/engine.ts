@@ -35,6 +35,7 @@ import {
 } from '../domain/ledger'
 import { buildCard, txOf } from '../domain/cards'
 import { findOpenByTxAndField, closePending } from '../domain/pending'
+import { applyTransactionDateTypeEdit } from '../domain/transaction-date-type'
 import { executeDeleteGate, cancelGate as cancelGateInDb } from '../domain/gates'
 import { executeBatch, batchFollowUpSummary } from '../domain/batch'
 import { applyClassify } from '../domain/classify'
@@ -758,6 +759,18 @@ export class Engine {
     const tx = getTransaction(this.db, txId)
     if (!tx) return { status: 'not_found', message: `交易 #${txId} 不存在` }
 
+    if (op.op === 'dateType') {
+      if (tx.state === 'deleted') return { status: 'error', message: '这笔已删除，先恢复再改' }
+      const previousMonth = tx.occurred_at.slice(0, 7)
+      const updated = applyTransactionDateTypeEdit(this.db, { txId, expectedVersion: op.expectedVersion, fields: op.fields })
+      const card = buildCard(this.db, txOf(this.db, txId))
+      const nextMonth = updated.occurredAt.slice(0, 7)
+      const message = previousMonth !== nextMonth
+        ? `已修改 #${txId}：发生时间已从 ${previousMonth} 移至 ${nextMonth}。`
+        : `已修改 #${txId}：日期与收支类型已更新。`
+      return { status: 'ok', message, card }
+    }
+
     if (op.op === 'delete') {
       if (tx.state === 'deleted') return { status: 'already_closed', message: '这笔已经是删除状态' }
       softDelete(this.db, txId, { reasoning: '用户在账本详情里删除' })
@@ -791,6 +804,8 @@ export class Engine {
       this.broadcast({ type: 'record-confirmed', payload: { card } })
       return { status: 'ok', message: `转账账户已补齐，入账 #${txId}`, card }
     }
+
+    if (op.op !== 'set') return { status: 'error', message: '不支持的编辑操作' }
 
     // op.op === 'set'：改分类/金额/商户/备注/账户
     if (tx.state === 'deleted') return { status: 'error', message: '这笔已删除，先恢复再改' }

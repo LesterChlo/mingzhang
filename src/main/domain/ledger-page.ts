@@ -21,6 +21,7 @@ import type {
   ReportCardData,
 } from '../../shared/types'
 import { getSetting, getThreshold, setSetting } from './ledger'
+import { primaryTransactionAttachmentRef } from './transaction-attachments'
 import { buildReport, reportText } from './reports'
 
 export function emptyLedgerAgg(month: string | null): LedgerAgg {
@@ -43,13 +44,9 @@ const JOINS_LIST =
   ' JOIN accounts a ON a.id = t.account_id' +
   ' LEFT JOIN accounts ta ON ta.id = t.to_account_id'
 
-/** 📎 列（账本屏规格 §3.2）：来源附件相对文件名，无则 NULL。
- *  为什么用标量子查询而不是 LEFT JOIN imports：一个 source_message_id 可能对应多条 imports，
- *  JOIN 会扇出重复行（同一笔账变成两行）；标量子查询只取最近一条非空 source_ref，行数恒定。
- *  口径与 txDetail 的 attachmentRef 一致——都读 imports.source_ref（attachments/ 内相对名）。 */
-const ATTACHMENT_REF_COL =
-  ' (SELECT i.source_ref FROM imports i WHERE i.source_message_id = t.source_message_id' +
-  ' AND i.source_ref IS NOT NULL ORDER BY i.id DESC LIMIT 1) AS attachmentRef'
+/** 📎 与 txDetail 同读交易附件权威；显式空覆盖不会复活旧 imports。
+ *  在分页后解析引用，不 JOIN 多条来源，因此不改变列表/汇总行数。 */
+const ATTACHMENT_REF_COL = ' NULL AS attachmentRef' // DB authority is resolved below, including explicit empty overrides.
 
 /** 聚合口径 JOIN：改动前只 JOIN categories；这里补 a/ta 一律 LEFT —— LEFT 只会补 NULL 列，
  *  不会丢行也不会扇出，所以既有聚合数字逐字不变。 */
@@ -187,7 +184,7 @@ export function queryLedgerPage(db: Database, filter: LedgerFilter): LedgerPageD
     reviewExpenseCents: Number(sums.reviewExpenseCents || 0),
     byCategory,
   }
-  return { items: rows, total, agg }
+  return { items: rows.map(row => ({ ...row, attachmentRef: primaryTransactionAttachmentRef(db, row.id) })), total, agg }
 }
 
 /** 账户列表（账户屏 + 账本屏账户筛选下拉）。

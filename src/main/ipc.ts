@@ -1,6 +1,9 @@
 // IPC 面：渲染层唯一入口。类型化 handler，全部走主进程模块。
 
-import { ipcMain, nativeTheme, type WebContents } from 'electron'
+import { ipcMain, nativeTheme, nativeImage, type WebContents } from 'electron'
+import { createHash } from 'node:crypto'
+import { convertToPng } from '@earendil-works/pi-coding-agent'
+import { imageMagicMatches } from './attachment-files'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import type { AppConfigDTO, LedgerFilter, ThemeName, TxEditOp } from '../shared/types'
 import { normalizeTheme, type ConfigStore, type AppConfig } from './config/store'
@@ -14,6 +17,8 @@ import { stageBill } from './domain/bill'
 import { describeImportException, resolveImportException, confirmImportExceptionRecord } from './domain/import-exceptions'
 import type { ResolveImportExceptionInput } from '../shared/types'
 import { firstAttachmentRef } from './domain/pending'
+import { getTransactionAttachments, addTransactionAttachments, removeTransactionAttachment, primaryTransactionAttachmentRef, validateAttachmentTxId, validateAddTransactionAttachmentsInput } from './domain/transaction-attachments'
+import type { AddTxAttachmentsInput, RemoveTxAttachmentInput } from '../shared/types'
 import { previousMonth } from './domain/queries'
 import {
   emptyLedgerAgg,
@@ -242,6 +247,56 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     if (!db) throw new Error('账本未就绪')
     return resolveImportException(db, input, {sessionId:'ui-import-exception', via:'panel'})
   })
+  // Direct local UI actions: dynamic DB/directory, no Engine/tool/model invocation.
+  const attachmentContext = () => {
+    const attachmentsDir = ctx.getAttachmentsDir()
+    if (!attachmentsDir) throw new Error('附件目录未就绪')
+    return { attachmentsDir, validateImage: (bytes: Buffer, _mediaType: string): boolean => {
+      try { return !nativeImage.createFromBuffer(bytes).isEmpty() } catch { return false }
+    } }
+  }
+  ipcMain.handle('mz:listTransactionAttachments', (_e, txId: number) => {
+    validateAttachmentTxId(txId)
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return getTransactionAttachments(db, txId, attachmentContext().attachmentsDir)
+  })
+  ipcMain.handle('mz:addTransactionAttachments', (_e, input: AddTxAttachmentsInput) => {
+    validateAddTransactionAttachmentsInput(input)
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    const context = attachmentContext()
+    const extended = input.files.filter(file => file.mediaType === 'image/gif' || file.mediaType === 'image/webp')
+    if (!extended.length) return addTransactionAttachments(db, input, context)
+    // Electron nativeImage supports PNG/JPEG, not GIF/WebP on Windows. Use the already
+    // installed pi Photon decoder to PNG IN MEMORY, then require a real native decode.
+    // Preserve original bytes/MIME on disk. No window, model, network or new dependency.
+    const current = getTransactionAttachments(db, input.txId, context.attachmentsDir)
+    if (current.version !== input.expectedVersion) throw new Error('附件或交易版本过期，请刷新后重新复核')
+    const transaction = db.prepare('SELECT state FROM transactions WHERE id=?').get(input.txId)
+    if (transaction?.state === 'deleted') throw new Error('这笔交易已删除，请先恢复后再修改附件')
+    const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+    const decoded = new Map<string, boolean>()
+    return (async () => {
+      for (const file of extended) {
+        const bytes = Buffer.from(file.dataBase64, 'base64')
+        if (!imageMagicMatches(bytes, file.mediaType)) throw new Error('图片内容与声明格式不一致')
+        const converted = await convertToPng(file.dataBase64, file.mediaType)
+        if (!converted || !context.validateImage(Buffer.from(converted.data, 'base64'), 'image/png')) throw new Error('图片内容损坏或无法解码')
+        decoded.set(digest(bytes), true)
+      }
+      // A restore may replace the DB while conversion yields. Never use the old handle.
+      if (ctx.getDb() !== db || ctx.getAttachmentsDir() !== context.attachmentsDir) throw new Error('账本已切换，请刷新后重新复核附件')
+      return addTransactionAttachments(db, input, { ...context, validateImage: (bytes, mediaType) =>
+        mediaType === 'image/gif' || mediaType === 'image/webp' ? decoded.get(digest(bytes)) === true : context.validateImage(bytes, mediaType),
+      }) // Domain rechecks the version after conversion, before any file/SQL write.
+    })()
+  })
+  ipcMain.handle('mz:removeTransactionAttachment', (_e, input: RemoveTxAttachmentInput) => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return removeTransactionAttachment(db, input, attachmentContext())
+  })
 
   ipcMain.handle('mz:txDetail', (_e, txId: number) => {
     const db = ctx.getDb()
@@ -253,12 +308,7 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
         ' LEFT JOIN accounts ta ON ta.id=t.to_account_id WHERE t.id=?',
     ).get(txId) as Record<string, unknown> | undefined
     if (!tx) return null
-    const smid = (tx.source_message_id as string | null) ?? null
-    const imp = smid
-      ? (db.prepare('SELECT source_ref FROM imports WHERE source_message_id = ? AND source_ref IS NOT NULL ORDER BY id DESC LIMIT 1').get(smid) as
-          | { source_ref: string | null }
-          | undefined)
-      : undefined
+    const attachmentRef = primaryTransactionAttachmentRef(db, txId)
     const audits = db
       .prepare("SELECT change_type, changed_by, reasoning, confidence_score, changed_at, before_value, after_value" +
         " FROM audit_log WHERE entity_type='transaction' AND entity_id=? ORDER BY id")
@@ -278,7 +328,7 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
         note: (tx.note as string | null) ?? null,
       },
       /** 段4-2：来源附件原图（attachments/ 相对名，可点开）+ 入库时间。 */
-      attachmentRef: imp?.source_ref ?? null,
+      attachmentRef,
       createdAt: String(tx.created_at ?? ''),
       audit: audits.map((a) => ({
         changeType: a.change_type,

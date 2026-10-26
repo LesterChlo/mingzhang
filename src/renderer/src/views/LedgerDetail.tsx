@@ -8,8 +8,7 @@
 //   禁用（后端不支持，标明原因，不做假按钮）：
 //           改日期 / 改类型（editTx set 只接受 分类/金额/说明/备注/账户）
 //           拆账 / 标记不计收支（后端无对应通道，规格 §6）
-//   附件：txDetail().attachmentRef → readAttachment() 取缩略图；多附件管理（+ 添加照片 / 单张删除）
-//         后端只存「来源附件」单张，故如实标待后端。
+//   附件：独立的本地多图列表、添加与移除引用；不调用模型，不删除共享原图。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
@@ -17,22 +16,7 @@ import type { AccountOption, TxDetailDTO, TxEditOp } from '../../../shared/types
 import { useInbox } from '../shell/inboxStore'
 import { STATE_LABELS, humanError, money, stateTone } from '../lib/ledgerFilter'
 import { txTypeLabel } from '../lib/shellFormat'
-
-const CLIP_ICON = (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-  </svg>
-)
+import {TransactionAttachments} from './TransactionAttachments'
 
 /** 后端不支持的字段——原因逐条写清，禁用态可见（不做假按钮）。 */
 const BACKEND_GAPS: { id: string; label: string; reason: string }[] = [
@@ -66,7 +50,6 @@ export function LedgerDetail({
   const [merchant, setMerchant] = useState('')
   const [fromAccount, setFromAccount] = useState('')
   const [toAccount, setToAccount] = useState('')
-  const [thumb, setThumb] = useState<string | null>(null)
   const flashTimer = useRef<number | null>(null)
 
   const showFlash = useCallback((text: string) => {
@@ -102,27 +85,6 @@ export function LedgerDetail({
       .then(setAccounts)
       .catch(() => setAccounts([]))
   }, [])
-
-  // 附件缩略图：attachmentRef → readAttachment(dataURL)；没有就置空，不占位造图
-  useEffect(() => {
-    let cancelled = false
-    const ref = detail?.attachmentRef ?? null
-    if (!ref) {
-      setThumb(null)
-      return
-    }
-    void window.mz
-      .readAttachment(ref)
-      .then((url) => {
-        if (!cancelled) setThumb(url)
-      })
-      .catch(() => {
-        if (!cancelled) setThumb(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [detail?.attachmentRef])
 
   const run = useCallback(
     async (op: TxEditOp, okText: string, mode: 'flash' | 'toast' = 'flash'): Promise<void> => {
@@ -359,27 +321,7 @@ export function LedgerDetail({
           </div>
         </div>
 
-        {/* 附件：来源附件单张（txDetail.attachmentRef） */}
-        <div className="mz-detail-field">
-          <span className="mz-field-lb">来源附件</span>
-          {detail.attachmentRef ? (
-            <div className="mz-attach" data-testid="ledger-attach">
-              {thumb ? (
-                <img className="mz-thumb" src={thumb} alt={detail.attachmentRef} />
-              ) : (
-                <span className="mz-clip">{CLIP_ICON}</span>
-              )}
-              <span className="mz-text-3">{detail.attachmentRef}</span>
-            </div>
-          ) : (
-            <div className="mz-detail-static mz-text-3" data-testid="ledger-attach-empty">
-              这笔没有来源附件
-            </div>
-          )}
-          <div className="mz-todo-note" data-testid="ledger-attach-gap">
-            多附件管理（添加照片 / 单张删除 / 清理未引用）待后端：现有通道只能读「来源附件」单张
-          </div>
-        </div>
+        <TransactionAttachments key={tx.id} txId={tx.id} deleted={deleted} onChanged={() => {void load();onChanged()}}/>
       </div>
 
       {/* 动作区：只放后端真正支持的按钮 */}

@@ -1,0 +1,20 @@
+.mz-tx-attachments{padding-top:8px;margin-top:6px;border-top:1px solid var(--line)}
+.mz-tx-attachments-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mz-tx-attachments-head h3{margin:0;font-size:var(--fs-t4);font-weight:500;color:var(--text-1)}
+.mz-tx-attachments-head h3 span{font-size:var(--fs-t5);font-weight:400;margin-left:8px;color:var(--text-3)}
+.mz-tx-attachment-limits,.mz-tx-attachment-boundary{font-size:var(--fs-t5);line-height:1.6;color:var(--text-3);margin:10px 0}
+.mz-tx-attachment-list{display:flex;flex-direction:column;gap:8px}
+.mz-tx-attachment-row{display:flex;align-items:center;gap:10px;padding:9px;background:var(--bg-2);border-radius:10px;min-width:0}
+.mz-tx-attachment-preview{width:50px;height:50px;padding:0;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--bg-1);color:var(--text-3);font:inherit;font-size:var(--fs-t5);cursor:pointer}
+.mz-tx-attachment-preview:disabled{cursor:default}
+.mz-tx-attachment-preview img{width:100%;height:100%;object-fit:cover}
+.mz-tx-attachment-name{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-t5);color:var(--text-1)}
+.mz-tx-attachment-name>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mz-tx-attachment-name small{font-size:inherit;color:var(--text-3)}
+.mz-tx-attachment-error{font-size:var(--fs-t5);color:var(--danger);overflow-wrap:anywhere}
+.mz-tx-attachment-notice{font-size:var(--fs-t5);color:var(--text-2);margin:8px 0}
+.mz-image-overlay{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.68)}
+.mz-image-dialog{max-width:min(960px,90vw);max-height:90vh;padding:14px;background:var(--bg-1);color:var(--text-1);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 80px rgba(0,0,0,.4);display:flex;flex-direction:column;min-width:300px}
+.mz-image-dialog-head{display:flex;align-items:center;gap:20px;justify-content:space-between;font-size:var(--fs-t4);margin-bottom:12px}
+.mz-image-dialog-head>span{min-width:0;overflow-wrap:anywhere}
+.mz-image-dialog>img{min-height:0;max-width:100%;max-height:calc(90vh - 85px);object-fit:contain}

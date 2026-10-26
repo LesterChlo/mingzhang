@@ -23,6 +23,7 @@ import { classifyByMerchant, BUILTIN_CONFIDENCE } from './builtin-categories'
 import { buildCard, txOf } from './cards'
 import type { BatchExcludedRowDTO, TransactionCardData } from '../../shared/types'
 import { nowIso } from '../db/time'
+import { registerTransactionSourceAttachments } from './transaction-attachments'
 
 export interface BatchItemInput {
   amount_cents?: number | null
@@ -360,6 +361,7 @@ export function executeBatch(db: Database, gateId: number): BatchResult | null {
       sourceMessageId: plan.batchId,
       changedBy: 'import',
     })
+    registerTransactionSourceAttachments(db, txId, plan.attachments)
     if (item.dedupKey) {
       db.prepare('UPDATE transactions SET dedup_key = ? WHERE id = ?').run(item.dedupKey, txId)
     }

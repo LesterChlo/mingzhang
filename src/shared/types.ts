@@ -449,6 +449,22 @@ export interface AuditEntryDTO {
   afterRaw?: Record<string, unknown> | null
 }
 
+export interface TxAttachmentDTO {
+  ref: string
+  fileName: string
+  mediaType: string
+  byteLength: number
+  available: boolean
+}
+export interface TxAttachmentListDTO {
+  version: string
+  items: TxAttachmentDTO[]
+  limits: { maxCount: number; maxFileBytes: number; maxTotalBytes: number }
+}
+export interface TxAttachmentFileInput { fileName: string; mediaType: string; dataBase64: string }
+export interface AddTxAttachmentsInput { txId: number; expectedVersion: string; files: TxAttachmentFileInput[] }
+export interface RemoveTxAttachmentInput { txId: number; expectedVersion: string; ref: string }
+
 export interface TxDetailDTO {
   tx: TransactionCardData['tx']
   /** 段4-2：来源附件原图（attachments/ 相对名）+ 入库时间。 */
@@ -718,6 +734,9 @@ export interface MingZhangApi {
   applyClassify: (gateId: number, rows?: ClassifyAssignmentInput[]) => Promise<ClassifyResultDTO | null>
   /** D-01：整体撤销一次批量归类（按 classifyId 定位，只回退没被后续改过的笔）。 */
   undoClassify: (classifyId: string) => Promise<ClassifyUndoResultDTO>
+  listTransactionAttachments: (txId: number) => Promise<TxAttachmentListDTO>
+  addTransactionAttachments: (input: AddTxAttachmentsInput) => Promise<TxAttachmentListDTO>
+  removeTransactionAttachment: (input: RemoveTxAttachmentInput) => Promise<TxAttachmentListDTO>
   txDetail: (txId: number) => Promise<TxDetailDTO | null>
   /** A2：open 的 delete/batch gate 就地重建卡片（待收尾直接执行，不依赖对话卡片）。 */
   pendingGateCards: () => Promise<PendingGateCardDTO[]>

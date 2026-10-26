@@ -22,6 +22,8 @@ import {
   writeConfidenceThreshold,
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
+import { getBatchPresentation, setBatchPresentation } from './domain/view-state'
+import type { BatchPresentationDTO, PanelHistorySnapshotDTO } from '../shared/types'
 import { listMonthSummaries } from './domain/reports'
 import { listAccountSummaries } from './domain/account-summary'
 import { createAccount, renameAccountById } from './domain/accounts'
@@ -392,6 +394,8 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
   ipcMain.handle('mz:renameAccount', (_e, input: RenameAccountInput) => renameAccountById(requireDb(), input))
   ipcMain.handle('mz:createCategory', (_e, input: CreateCategoryInput) => createCategory(requireDb(), input))
   ipcMain.handle('mz:renameCategory', (_e, input: RenameCategoryInput) => renameCategory(requireDb(), input))
+  ipcMain.handle('mz:getBatchPresentation', (_e, gateId: number) => getBatchPresentation(requireDb(), gateId))
+  ipcMain.handle('mz:setBatchPresentation', (_e, gateId: number, patch: Partial<BatchPresentationDTO>) => setBatchPresentation(requireDb(), gateId, patch))
 
   ipcMain.handle('mz:prepareClassify', (_e, input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion?: string }) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('归类参数无效')
@@ -419,6 +423,15 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     const db = ctx.getDb()
     if (!db) throw new Error('账本未就绪')
     return undoClassify(db, classifyId)
+  })
+
+  ipcMain.handle('mz:getPanelHistory', (): PanelHistorySnapshotDTO => {
+    const engine = ctx.engines.tryGet()
+    if (!engine) return { sessionId: null, streamId: null, eventCursor: 0, busy: false, messages: [] }
+    // 同一主进程同步调用中拍状态并读 JSONL，期间不 await、不发模型请求。
+    const state = engine.panelHistoryState
+    const file = engine.sessionFile
+    return { ...state, messages: file ? parseSessionHistory(file, 300, { strict: true }) : [] }
   })
 
   ipcMain.handle('mz:loadHistory', () => {

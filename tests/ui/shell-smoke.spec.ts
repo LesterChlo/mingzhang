@@ -1266,7 +1266,7 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('import-review-workspace')).toHaveCount(0)
   })
 
-  test('结果条④ 关闭是内存态：切屏往返仍是关闭态', async () => {
+  test('结果条④ 关闭状态持久保存：切屏和重载后仍关闭', async () => {
     await ensureBatches(1)
     await barPage.getByTestId('nav-inbox').click()
     const bar = barPage.getByTestId('batch-result-bar')
@@ -1276,12 +1276,22 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('batch-result-bar'), '点了 ✕ 结果条还在').toHaveCount(0)
     await barPage.getByTestId('nav-ledger').click()
     await barPage.getByTestId('nav-inbox').click()
-    // D-04 跨重启持久化本单未实现：同一进程里关掉就该一直是关掉的
-    await expect(barPage.getByTestId('batch-result-bar'), '切屏往返后结果条自己回来了（本单只做内存态）').toHaveCount(0)
+    // issue #29: dismissed persists; a later readback test explicitly restores presentation only.
+    const result = await barPage.evaluate(() => window.mz.getBatchResult())
+    await expect.poll(() => barPage.evaluate(id => window.mz.getBatchPresentation(id), result!.gateId)).toMatchObject({ dismissed: true })
+    await expect(barPage.getByTestId('batch-result-bar'), '切屏往返后已关闭结果条自己回来了').toHaveCount(0)
+    await barPage.reload()
+    await barPage.waitForSelector('.mz-shell')
+    await expect(barPage.getByTestId('batch-result-bar'), '重载后关闭状态丢失').toHaveCount(0)
   })
 
   test('结果条⑤ 重载后按批次读回：待分类定掉 → 主按钮消失（退化为摘要行）', async () => {
     await ensureBatches(1)
+    // Restore only the previous test's persisted presentation, not ledger state or numeric assertions.
+    const preservedFacts = await barPage.evaluate(() => window.mz.listLedger({ limit: 100 }))
+    const result = await barPage.evaluate(() => window.mz.getBatchResult())
+    await barPage.evaluate(id => window.mz.setBatchPresentation(id, { dismissed: false }), result!.gateId)
+    expect(await barPage.evaluate(() => window.mz.listLedger({ limit: 100 }))).toEqual(preservedFacts)
     // 重载 = 全新渲染进程状态，唯一的「读回」真检验：数据只能来自库里那份批次方案
     await barPage.reload()
     await barPage.waitForSelector('.mz-shell', { timeout: 30_000 })

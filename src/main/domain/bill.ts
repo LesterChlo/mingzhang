@@ -4,6 +4,7 @@
 // 程序不猜：方案没覆盖到的列取值一律整批退回（不静默归类），把未覆盖取值回给模型改方案。
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
+import type { BatchExcludedRowDTO } from '../../shared/types'
 import { nowIso } from '../db/time'
 import { prepareBatch, type BatchItemInput, type BatchPlan } from './batch'
 import { listAccounts } from './ledger'
@@ -473,6 +474,7 @@ export function applyBillPlan(
   const items: BatchItemInput[] = []
   const dispositions: { no: number; disposition: 'planned' | 'skipped' | 'review'; reason: string | null }[] = []
   const skippedSamples: BillRowSample[] = []
+  const excludedRows: BatchExcludedRowDTO[] = []
   let skippedCount = 0
 
   for (const r of parsedRows) {
@@ -482,6 +484,15 @@ export function applyBillPlan(
     if (preSkip) {
       skippedCount += 1
       dispositions.push({ no: r.no, disposition: 'skipped', reason: preSkip })
+      excludedRows.push({
+        tableId: table.id,
+        rowNo: r.no,
+        sourceText: text,
+        merchant: cell(r.cells, resolved.merchant) || null,
+        amountCents: parseAmountCents(cell(r.cells, resolved.amount))?.cents ?? null,
+        occurredAt: parseOccurredAt(cell(r.cells, resolved.time)),
+        reason: preSkip,
+      })
       if (skippedSamples.length < 5) skippedSamples.push({ row: r.no, text, reason: preSkip })
       continue
     }
@@ -561,7 +572,7 @@ export function applyBillPlan(
     let plan_: BatchPlan | null = null
     let newCount = 0
     let duplicateCount = 0
-    if (items.length > 0) {
+    if (items.length > 0 || excludedRows.length > 0) {
       const prep = prepareBatch(db, {
         items,
         channel: plan.channel ?? table.channel,
@@ -570,6 +581,7 @@ export function applyBillPlan(
         billTableId: table.id,
         rowsConsidered,
         skippedCount,
+        excludedRows,
       })
       gateId = prep.gateId
       plan_ = prep.plan
@@ -595,7 +607,7 @@ export function applyBillPlan(
       throw new Error(`内部对账不平：材料 ${rowsConsidered} 行，但各项相加 ${accounted} 行（入账 ${newCount} + 重复 ${duplicateCount} + 待核对 ${reviewCount} + 不计 ${skippedCount}）`)
     }
     const after = getBillTable(db, table.id)
-    if (items.length > 0 && after && after.openRows !== 0) {
+    if (after && after.openRows !== 0) {
       throw new Error(`内部对账不平：处理后材料 #${table.id} 仍有 ${after.openRows} 行未被任何归宿覆盖`)
     }
     out = {

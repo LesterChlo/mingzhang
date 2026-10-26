@@ -21,7 +21,7 @@ import {
 import { createPending, getPending, closePending } from './pending'
 import { classifyByMerchant, BUILTIN_CONFIDENCE } from './builtin-categories'
 import { buildCard, txOf } from './cards'
-import type { TransactionCardData } from '../../shared/types'
+import type { BatchExcludedRowDTO, TransactionCardData } from '../../shared/types'
 import { nowIso } from '../db/time'
 
 export interface BatchItemInput {
@@ -70,6 +70,50 @@ export interface BatchPlan {
   billTableId?: number | null
   rowsConsidered?: number | null
   skippedCount?: number
+  /** 套表时保存的排除行快照；旧计划可能没有此字段，不从可变原表反算。 */
+  excludedRows?: BatchExcludedRowDTO[] | null
+}
+
+/** 只校验并复制已保存的快照，不查询可变原表；坏明细不能冒充完整来源。 */
+export function readBatchExcludedRows(
+  snapshot: { excludedRows?: unknown; skippedCount?: unknown; billTableId?: unknown; rowsConsidered?: unknown },
+  itemRowNos: unknown[],
+): BatchExcludedRowDTO[] | null {
+  const rows = snapshot.excludedRows
+  const skippedCount = snapshot.skippedCount ?? 0
+  if (!Array.isArray(rows) || !Number.isSafeInteger(skippedCount) || (skippedCount as number) < 0 || rows.length !== skippedCount) return null
+  if (snapshot.rowsConsidered != null &&
+    (!Number.isSafeInteger(snapshot.rowsConsidered) || snapshot.rowsConsidered !== itemRowNos.length + rows.length)) return null
+  if (snapshot.billTableId != null &&
+    (!Number.isSafeInteger(snapshot.billTableId) || (snapshot.billTableId as number) <= 0)) return null
+
+  const seen = new Set<string>()
+  const itemRows = new Set(itemRowNos.filter((no) => Number.isSafeInteger(no) && (no as number) > 0))
+  const out: BatchExcludedRowDTO[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row) ||
+      !Number.isSafeInteger(row.tableId) || row.tableId <= 0 ||
+      !Number.isSafeInteger(row.rowNo) || row.rowNo <= 0 ||
+      typeof row.sourceText !== 'string' || !row.sourceText.trim() ||
+      typeof row.reason !== 'string' || !row.reason.trim() ||
+      (row.merchant !== null && typeof row.merchant !== 'string') ||
+      (row.amountCents !== null && (!Number.isSafeInteger(row.amountCents) || row.amountCents <= 0 || row.amountCents > 1_000_000_000_00)) ||
+      (row.occurredAt !== null && (typeof row.occurredAt !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.occurredAt))) ||
+      (snapshot.billTableId != null && row.tableId !== snapshot.billTableId) || itemRows.has(row.rowNo)) return null
+    const key = `${row.tableId}:${row.rowNo}`
+    if (seen.has(key)) return null
+    seen.add(key)
+    out.push({
+      tableId: row.tableId,
+      rowNo: row.rowNo,
+      sourceText: row.sourceText,
+      merchant: row.merchant,
+      amountCents: row.amountCents,
+      occurredAt: row.occurredAt,
+      reason: row.reason,
+    })
+  }
+  return out
 }
 
 /** 计划批次：识别/去重/分类预估，落 batch_confirm gate。不写 transactions。 */
@@ -85,9 +129,15 @@ export function prepareBatch(
     billTableId?: number | null
     rowsConsidered?: number | null
     skippedCount?: number
+    excludedRows?: BatchExcludedRowDTO[] | null
   },
 ): { gateId: number; plan: BatchPlan } {
-  if (!input.items.length) throw new Error('批次为空：没有识别到任何待处理条目')
+  const excludedRows = input.excludedRows == null ? null : readBatchExcludedRows(input, input.items.map((item) => item.row_no))
+  if (input.excludedRows != null && excludedRows === null) throw new Error('排除行快照无效：明细格式、来源或计数不匹配')
+  if (!input.items.length && !excludedRows?.length) throw new Error('批次为空：没有识别到任何待处理条目')
+  // import、审计与确认门是一份方案；建门失败不能留下孤儿 import，套表外层事务也可嵌套。
+  let out: { gateId: number; plan: BatchPlan } | null = null
+  const run = db.transaction((): void => {
   const batchId = `batch-${nowIso()}-${Math.random().toString(36).slice(2, 8)}`
   const importId = createImport(db, {
     sourceType: input.sourceType,
@@ -108,6 +158,7 @@ export function prepareBatch(
     billTableId: input.billTableId ?? null,
     rowsConsidered: input.rowsConsidered ?? null,
     skippedCount: input.skippedCount ?? 0,
+    excludedRows,
   }
 
   for (const item of input.items) {
@@ -171,7 +222,11 @@ export function prepareBatch(
     question: `批次待确认：${plan.newCount} 笔将入账，${plan.duplicateCount} 笔重复跳过，${plan.unparsedCount} 笔待核对${tail}`,
     payload: { plan },
   })
-  return { gateId, plan }
+  out = { gateId, plan }
+  })
+  run()
+  if (!out) throw new Error('批次没有产出确认方案（不应发生）')
+  return out
 }
 
 export interface BatchResult {
@@ -189,6 +244,9 @@ export function executeBatch(db: Database, gateId: number): BatchResult | null {
   const gate = getPending(db, gateId)
   if (!gate || gate.status !== 'open' || gate.field !== 'batch_confirm') return null
   const { plan } = JSON.parse(gate.payload) as { plan: BatchPlan }
+  if (!plan.items.length && !readBatchExcludedRows(plan, [])?.length) {
+    throw new Error('批次为空或排除行快照无效：不能执行无可靠来源的空方案')
+  }
 
   const result: BatchResult = { completed: [], duplicates: [], unparsedKept: 0, transfersSkipped: [], unmatchedAccounts: 0, importStatus: 'pending' }
   // 一次性 + 原子性：整体包进事务——任何一步抛错全部回滚、gate 保持 open 可重试（防半执行/重复执行）

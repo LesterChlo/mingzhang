@@ -1221,19 +1221,22 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('open-import-review')).toHaveText('直接复核本批分类')
   })
 
-  test('结果条② 折叠组：重复行逐行列出，不计收支组如实说「逐行明细待后端」', async () => {
+  test('结果条② 折叠组：重复与不计收支来源逐行核对，不伪造空明细', async () => {
     await ensureBatches(1)
     const bar = barPage.getByTestId('batch-result-bar')
     await expect(bar).toBeVisible()
 
-    // 不计收支组：数字在，但逐行明细后端拿不到 → 必须**说出来**，不许拿空数组冒充
+    // issue #28 replaces the old placeholder with complete persisted source rows; keep all counts and no-write guards.
     const exToggle = bar.getByTestId('br-excluded-toggle')
     await expect(exToggle).toHaveText('▸ 不计收支 1 行')
     await exToggle.click()
     const exNote = bar.getByTestId('br-excluded-note')
     await expect(exNote).toBeVisible()
-    await expect(exNote).toContainText('共 1 行按方案不计收支')
-    await expect(exNote, '后端没给的明细被编成了「没有不计收支的行」').toContainText('逐行明细待后端')
+    const stored = await barPage.evaluate(() => window.mz.getBatchResult())
+    expect(stored!.excludedRows).toHaveLength(1)
+    await expect(exNote.getByTestId('br-excluded-row')).toHaveCount(1)
+    await expect(exNote.getByTestId('br-excluded-row')).toContainText(stored!.excludedRows![0].reason)
+    await expect(exNote.getByTestId('br-excluded-legacy')).toHaveCount(0)
     // D-01 未实现 → 绝不渲染「全部恢复为正常收支」这类无依赖按钮
     await expect(bar.getByRole('button', { name: /恢复为正常收支/ })).toHaveCount(0)
 

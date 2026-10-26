@@ -5,14 +5,14 @@
 // 所以这里的数字一律从库里现算，绝不依赖任何内存态：
 //   - 已入账 / 待分类：查 transactions（批次归属 = source_message_id = plan.batchId）
 //   - 重复 / 不计收支 / 待核对：取 plan（方案原话，不重算、不猜）
-//   - 逐行明细：重复行能给（plan.items 里有），不计收支行**给不了**（D-03b 未实现）→ 恒 null，
-//     界面必须显式写「逐行明细待后端」，不许拿空数组假装「没有不计收支的行」。
+//   - 逐行明细：重复取 plan.items，不计收支取套表时冻结的 plan.excludedRows；
+//     旧批未保存可靠明细时为 null，不拿空数组冒充，也不重读可变原表。
 //
 // 口径边界（与既有事实层一致）：
 //   待分类（needs_review 且无分类）⊂ 已入账；state='deleted' 一律排除。
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import type { BatchPlan, BatchPlanItem } from './batch'
+import { readBatchExcludedRows, type BatchPlan, type BatchPlanItem } from './batch'
 
 export type { BatchResultSummaryDTO } from '../../shared/types'
 import type { BatchResultSummaryDTO } from '../../shared/types'
@@ -25,13 +25,13 @@ interface GateRow {
 }
 
 /**
- * 取「已执行」的批次确认门：field='batch_confirm' 且 status <> 'open'，按更新时间倒序取一条。
- * open 的门（用户还没点确认）**不算**执行结果——那时账还没动，数字会撒谎。
+ * 取「已执行」的批次确认门：field='batch_confirm' 且 status='resolved'，按更新时间倒序取一条。
+ * open / cancelled 都不是执行结果：未确认或已取消的方案不能冒充已执行。
  */
 function pickGate(db: Database, gateId?: number): GateRow | null {
   const sql =
     "SELECT id, payload, status, updated_at FROM pending_clarifications" +
-    " WHERE field = 'batch_confirm' AND status <> 'open'" +
+    " WHERE field = 'batch_confirm' AND status = 'resolved'" +
     (gateId === undefined ? '' : ' AND id = ?') +
     ' ORDER BY updated_at DESC, id DESC LIMIT 1'
   const row = (gateId === undefined ? db.prepare(sql).get() : db.prepare(sql).get(gateId)) as GateRow | undefined
@@ -41,8 +41,16 @@ function pickGate(db: Database, gateId?: number): GateRow | null {
 function parsePlan(payload: string): BatchPlan | null {
   try {
     const p = JSON.parse(payload) as { plan?: BatchPlan }
-    if (!p.plan || typeof p.plan.batchId !== 'string' || p.plan.batchId === '') return null
-    return p.plan
+    const plan = p.plan
+    if (!plan || typeof plan.batchId !== 'string' || plan.batchId === '' ||
+      !Number.isSafeInteger(plan.importId) || plan.importId <= 0 || !Array.isArray(plan.items) ||
+      plan.items.some((item) => !item || !['new', 'duplicate', 'unparsed'].includes(item.status))) return null
+    const counts = [plan.newCount, plan.duplicateCount, plan.unparsedCount, plan.skippedCount]
+    if (counts.some((n) => n != null && (!Number.isSafeInteger(n) || n < 0))) return null
+    if (plan.newCount !== plan.items.filter((item) => item.status === 'new').length ||
+      plan.duplicateCount !== plan.items.filter((item) => item.status === 'duplicate').length ||
+      plan.unparsedCount !== plan.items.filter((item) => item.status === 'unparsed').length) return null
+    return plan
   } catch {
     // payload 损坏：读不出事实就返回 null，界面不显示结果条（不编数字）
     return null
@@ -91,8 +99,7 @@ function summarize(db: Database, gate: GateRow): BatchResultSummaryDTO | null {
       unparsed: plan.unparsedCount ?? 0,
     },
     duplicatesRows: duplicateRows(plan.items ?? []),
-    // D-03b 未实现：按方案不计收支的行明细后端还拿不到，显式 null（UI 必须自己说明）
-    excludedRows: null,
+    excludedRows: readBatchExcludedRows(plan, (plan.items ?? []).map((item) => item.rowNo)),
   }
 }
 

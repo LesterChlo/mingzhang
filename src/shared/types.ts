@@ -514,6 +514,17 @@ export interface LedgerAgg {
   byCategory: { category: string; cents: number; count: number }[]
 }
 
+/** 确定性套表时保存的不计收支行：金额/时间解析不出保留 null，不重读可变原表。 */
+export interface BatchExcludedRowDTO {
+  tableId: number
+  rowNo: number
+  sourceText: string
+  merchant: string | null
+  amountCents: number | null
+  occurredAt: string | null
+  reason: string
+}
+
 /**
  * 批次结果条数据（D-03a「按批次读回」+ K3 设计 G 组事实条）。
  * 数字口径见 src/main/domain/batch-summary.ts：已入账/待分类查库，重复/不计收支/待核对取 plan。
@@ -540,8 +551,8 @@ export interface BatchResultSummaryDTO {
   }
   /** 重复行逐行明细（能带出来）。 */
   duplicatesRows: { merchant: string | null; amountCents: number | null; reason: string }[]
-  /** 不计收支的逐行明细：本单未实现（D-03b）→ 恒 null。UI 必须显式说明「逐行明细待后端」，不许拿空数组冒充。 */
-  excludedRows: null
+  /** 套表时冻结的完整明细；旧批未保存可靠来源为 null，已保存且零排除可为 []。 */
+  excludedRows: BatchExcludedRowDTO[] | null
 }
 
 export interface ChatMessageDTO {

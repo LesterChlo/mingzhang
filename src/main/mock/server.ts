@@ -136,10 +136,53 @@ function classifyAssignments(toolText: string | null): { group_key: string; cate
   return out
 }
 
+/** 通知只按已知结果生成回执；任意说明/写作指令不作为回复内容。 */
+function notificationReply(text: string): string {
+  const unknown = '（离线演示）暂时无法确认这次操作的结果，请查看界面和账本状态。'
+  const validCount = (value: string, minimum = 0): boolean => Number.isSafeInteger(Number(value)) && Number(value) >= minimum
+  if (/^系统通知：用户取消了刚才的删除操作，账目未变。/.test(text)) {
+    return '已取消删除，账目未变。'
+  }
+  const failure = /^系统通知：((?:批次执行|批次|批量归类|归类|删除|入账|执行|操作)?)(失败|未完成)(?:，(账目未改变|账目未变))?。/.exec(text)
+  if (failure) return `${failure[1] || '操作'}${failure[2]}${failure[3] ? `，${failure[3]}` : ''}。`
+  // batchFollowUpSummary 的结果在第二句，转账结果还在后段；不靠截第一句净化。
+  const result = /^系统通知：用户已在界面确认批次入账。已完成 (\d+) 笔（其中 (\d+) 笔缺分类转待确认），重复跳过 (\d+) 笔，缺金额待核对 (\d+) 笔(?:；(\d+) 笔转账因缺转入\/转出账户未入账（([\s\S]*)）(?=。请主动逐笔追问用户这笔转账的「转出账户」和「转入账户」))?。/.exec(text)
+  if (result) {
+    if (!result.slice(1, 5).every((value) => validCount(value)) || Number(result[2]) > Number(result[1]) || (result[5] !== undefined && !validCount(result[5], 1))) return unknown
+    let reply = `批次已处理：已完成 ${result[1]} 笔（其中 ${result[2]} 笔缺分类转待确认），重复跳过 ${result[3]} 笔，缺金额待核对 ${result[4]} 笔。`
+    if (result[5]) {
+      // 商户字段来自材料，可能夹指令；只提取逐笔金额，绝不原样回显这个自由文本。
+      const amounts = [...result[6].matchAll(/ ¥(-?\d+\.\d{2})(?=、(?!\s*¥-?\d+\.\d{2}(?:、|$))|$)/g)].map((m) => `¥${m[1]}`)
+      const details = amounts.length === Number(result[5]) ? `（金额：${amounts.join('、')}）` : '（金额明细请查看待收尾）'
+      reply += `${result[5]} 笔转账因缺转入/转出账户未入账${details}。这些转账还需补充转出账户和转入账户。`
+    }
+    return reply
+  }
+  const deleted = /^系统通知：用户已在界面确认删除（交易 #(\d+)，现状态 deleted）。/.exec(text)
+  if (deleted) return validCount(deleted[1], 1) ? `交易 #${deleted[1]} 已删除，可随时恢复。` : unknown
+  const record = /^系统通知：用户已在界面确认入账（交易 #(\d+)，现状态 confirmed）。/.exec(text)
+  if (record) return validCount(record[1], 1) ? `交易 #${record[1]} 已入账。` : unknown
+  const batch = /^系统通知：批次已入账 (\d+) 笔。/.exec(text)
+  if (batch) return validCount(batch[1]) ? `批次已入账 ${batch[1]} 笔。` : unknown
+  const classifiedBatch = /^系统通知：用户已在界面确认批量归类，(\d+) 笔入账（(\d+) 组）。/.exec(text)
+  if (classifiedBatch) {
+    if (!validCount(classifiedBatch[1]) || !validCount(classifiedBatch[2]) || Number(classifiedBatch[2]) > Number(classifiedBatch[1])) return unknown
+    return `已归类并入账 ${classifiedBatch[1]} 笔（${classifiedBatch[2]} 组）。`
+  }
+  const classified = /^系统通知：已归类 (\d+) 笔。/.exec(text)
+  if (classified) return validCount(classified[1]) ? `已归类 ${classified[1]} 笔。` : unknown
+  return unknown
+}
+
 export function decide(
   messages: ChatMessage[],
   lastTxId = 0,
 ): { kind: 'tool'; name: string; args: Record<string, unknown> } | { kind: 'text'; text: string } {
+  const t = userText(messages).trim()
+  // 通知优先于工具结果/两步剧本：只知会，不再下单，也不把内部工具文本当回执。
+  if (/^系统通知/.test(t)) {
+    return { kind: 'text', text: notificationReply(t) }
+  }
   const toolResult = lastToolResultText(messages)
   // 第 8 单剧本：读完表（read_bill 回来）→ 交一份从列名确定性推出来的读表方案
   if (lastToolName(messages) === 'read_bill' && toolResult) {
@@ -179,15 +222,6 @@ export function decide(
   if (toolResult) {
     return { kind: 'text', text: toolResult }
   }
-  const text = userText(messages)
-  const t = text.trim()
-
-  // 系统通知（确认门 followUp 等）只知会，不触发任何规则——否则会重复下单。
-  // 回执复述结果摘要（含逐项交代）：这条 assistant 回复会持久化进会话，重启后历史可见。
-  if (/^系统通知/.test(t)) {
-    return { kind: 'text', text: `收到，已执行。${t.replace(/^系统通知：/, '')}` }
-  }
-
   // 账单材料已入库（消息里带 table_id 与列名样本）→ 先读表再出方案，绝不逐行报数
   const staged = billColumns(messages)
   if (staged) {

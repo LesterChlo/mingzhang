@@ -19,13 +19,18 @@ import { money } from '../lib/shellFormat'
 import { renderMarkdown } from '../lib/markdown'
 import { THINK_TEXT_CAP } from '../lib/thinking'
 import { toolLabel, usePanel } from '../shell/panelStore'
+import { useInbox } from '../shell/inboxStore'
+import { SplitPlanCard } from './SplitPlanCard'
 import type { PanelItem } from '../shell/panelStore'
+import './panel-history.css'
 
 /** 距底多少像素以内算"在底部"（贴底判定阈值：往上翻过这个量就不抢滚）。 */
 const STICK_THRESHOLD_PX = 24
 
 export function AssistantPanel(): ReactElement {
-  const { open, items, busy, plans, planEdits, outcomes, setPlanValue, applyClassify, undoClassify, send } = usePanel()
+  const { open, items, busy, historyLoading, historyError, reloadHistory, plans, planEdits, outcomes, setPlanValue, applyClassify, undoClassify, send } = usePanel()
+  const { gateCards, notify } = useInbox()
+  const splitPlans = gateCards.flatMap(g => g.card.kind === 'split-gate' ? [g.card.plan] : [])
   const [text, setText] = useState('')
 
   // A 单：新消息自动贴底 —— 用户在底部时才贴（往上翻过就不抢）；
@@ -48,7 +53,7 @@ export function AssistantPanel(): ReactElement {
   const edits = planEdits[gateId] ?? {}
   // 回执按 gateId 分桶：别的门卡的回执不会串到这张表上（同源重复入桶也不该抹掉回执）
   const outcome = plan ? outcomes[gateId] : undefined
-  const resolved = outcome !== undefined
+  const resolved = outcome?.applied != null || outcome?.undone != null
 
   const totalCount = useMemo(() => (plan ? plan.groups.reduce((s, g) => s + g.count, 0) : 0), [plan])
   const assignedCount = useMemo(
@@ -82,13 +87,17 @@ export function AssistantPanel(): ReactElement {
       </header>
 
       <div className="mz-ap-stream" data-testid="panel-stream" ref={streamRef} onScroll={onStreamScroll}>
-        {items.length === 0 ? (
+        {historyLoading && <p className="mz-ap-hint" data-testid="panel-history-loading" role="status">正在读取这次对话…</p>}
+        {historyError && <div className="mz-ap-error" data-testid="panel-history-error" role="alert"><p>历史读取失败：{historyError}</p><button type="button" className="mz-btn" data-testid="panel-history-retry" onClick={() => void reloadHistory()}>重新读取</button></div>}
+        {items.length === 0 && !historyLoading && !historyError ? (
           <p className="mz-ap-hint">
             可以问账目，也可以让助手准备操作方案；需要确认的操作会留在收件箱。
           </p>
         ) : (
           items.map((it) => <PanelRow key={it.id} item={it} />)
         )}
+
+        {splitPlans.length > 0 && <div data-testid="panel-split-plans">{splitPlans.map(p => <SplitPlanCard key={p.gateId} plan={p} onDone={result => notify({ text: result.message, tone: 'ok' })} />)}</div>}
 
         {/* 归类映射表：门卡是数据源，没有卡就是没有待分类——空态直说，不画一张空表 */}
         {!plan && (
@@ -182,13 +191,13 @@ export function AssistantPanel(): ReactElement {
       <form className="mz-ap-composer" onSubmit={submit}>
         <input
           value={text}
-          disabled={busy}
+          disabled={busy || historyLoading}
           data-testid="panel-input"
           aria-label="给助手下指令"
           placeholder="说一句，或让它去归类 —— 例：把待分类的账按建议归类"
           onChange={(e) => setText(e.target.value)}
         />
-        <button type="submit" className="mz-btn mz-btn-primary" data-testid="panel-send" disabled={busy}>
+        <button type="submit" className="mz-btn mz-btn-primary" data-testid="panel-send" disabled={busy || historyLoading}>
           发送
         </button>
       </form>
@@ -220,6 +229,7 @@ function PanelRow({ item }: { item: PanelItem }): ReactElement | null {
           </span>
           <div className="mz-ap-bubble mz-ap-bubble-user">
             {head}
+            {item.images?.filter(image => /^data:image\/(png|jpeg|webp|gif);base64,/.test(image.previewUrl)).map((image, index) => <details className="mz-ap-history-image" key={index} data-testid="panel-msg-image"><summary><img src={image.previewUrl} alt={image.fileName || '历史图片'} /><span>查看图片</span></summary><img className="mz-ap-history-full" src={image.previewUrl} alt={image.fileName || '历史图片'} /></details>)}
             {material !== null && (
               <details className="mz-ap-material" data-testid="panel-msg-material">
                 <summary>账单材料（发给模型的上下文 · 点开看原文）</summary>
@@ -230,6 +240,8 @@ function PanelRow({ item }: { item: PanelItem }): ReactElement | null {
         </div>
       )
     }
+    case 'notice':
+      return <div className="mz-ap-notice" data-testid="panel-local-error" role="status"><span>发送记录</span><p>{item.text}</p></div>
     case 'assistant':
       // A 单：助手靠左气泡 + 角色标；正文按 Markdown 白名单渲染（T0928 §3）
       return (
@@ -253,7 +265,7 @@ function PanelRow({ item }: { item: PanelItem }): ReactElement | null {
         </div>
       )
     case 'thinking':
-      return <ThinkRow seconds={item.seconds} running={item.running} text={item.text} truncated={item.truncated} />
+      return <ThinkRow seconds={item.seconds} running={item.running} text={item.text} truncated={item.truncated} historical={item.historical} />
   }
 }
 
@@ -281,11 +293,13 @@ function ThinkRow({
   running,
   text,
   truncated,
+  historical,
 }: {
   seconds: number
   running: boolean
   text: string
   truncated: boolean
+  historical?: boolean
 }): ReactElement {
   const [open, setOpen] = useState(false)
   return (
@@ -297,7 +311,7 @@ function ThinkRow({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {running ? `思考中 · ${seconds}s` : `思考 ${seconds}s`}
+        {historical ? '思考记录' : running ? `思考中 · ${seconds}s` : `思考 ${seconds}s`}
       </button>
       {open && <ThinkFull text={text} truncated={truncated} />}
     </div>

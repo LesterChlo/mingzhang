@@ -24,11 +24,13 @@ import {
   mkdtempSync,
   copyFileSync as fsCopyFileSync,
   renameSync as fsRenameSync,
+  type Stats,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename, dirname, resolve, sep, isAbsolute } from 'node:path'
 import { argon2id } from 'hash-wasm'
 import { runMigrations } from '../db/migrations'
+import { foldSqliteIdentifier } from '../db/sqlite-identifier'
 import schemaSqlText from '../db/schema.sql?raw'
 
 const SNAPSHOT_KEEP = 7
@@ -45,137 +47,61 @@ function isSpaceCh(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v'
 }
 
-function isWordCh(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9_$]/.test(ch)
-}
-
-/** 从 i 处尝试匹配独立的 `IF NOT EXISTS`（大小写不敏感），返回结束下标或不匹配。 */
-function matchIfNotExists(sql: string, i: number): number | null {
-  const kw = sql.slice(i, i + 2)
-  if (kw.toLowerCase() !== 'if') return null
-  if (isWordCh(sql[i - 1]) || isWordCh(sql[i + 2])) return null
-  let j = i + 2
-  const skipWs = (): void => {
-    while (j < sql.length && isSpaceCh(sql[j])) j += 1
-  }
-  skipWs()
-  if (sql.slice(j, j + 3).toLowerCase() !== 'not') return null
-  if (isWordCh(sql[j - 1]) || isWordCh(sql[j + 3])) return null
-  j += 3
-  skipWs()
-  if (sql.slice(j, j + 6).toLowerCase() !== 'exists') return null
-  if (isWordCh(sql[j - 1]) || isWordCh(sql[j + 6])) return null
-  return j + 6
-}
-
-/**
- * 生产 DDL 归一化：契约侧与被检侧共用同一函数，保证口径一致。
- *
- * 第五轮裁定修复：原实现只做「折叠连续空白」，于是**纯排版差异**仍被判成漂移 ——
- *   `settings ( key` vs `settings(key`、`CHECK (x = 1)` vs `CHECK(x=1)`、换行/对齐空格。
- *   这些在 SQLite 语义上完全等价（schema.sql 与 sqlite_master 都原样保留排版），
- *   却让「同库重建、仅排版不同」的合法账本被 openLedger 拒启动。
- * 现在**字面量之外**的空白统一折叠，且紧贴 PUNCT_ADJACENT 标点的空白直接抹平。
- * 这类空白不承载任何语义，抹平它不可能掩盖真漂移：真漂移必然改动标识符或字面量本身，
- * 而标识符/字面量的差异在这里仍然逐字保留。
- *
- * 单趟扫描，字面量安全（关键约束）：
- *  - `'...'` 内部原样保留（含大小写与空白）—— `'x y'` 与 `'xy'` 语义不同，绝不能折叠；
- *  - 去注释（`--` / `/* *\/`）时不动字面量；
- *  - `IF NOT EXISTS` 关键字删除（沿用既有口径，两侧一致）。
- * 去注释必须在折叠空白之前：schema.sql 的列尾注释含换行，先折叠会让注释吞掉后半条 DDL。
+/** Compare lexical tokens, not stripped character runs: quotes and comments also
+ * separate identifiers from types. Literal bytes and quoted identifier interiors
+ * are opaque; complex identifiers retain canonical quotes to avoid token collisions.
  */
 export function normalizeSchemaDdl(sql: string): string {
-  const out: string[] = []
-  const n = sql.length
+  const tokens: { text: string; punct: boolean; bare: boolean }[] = []
   let i = 0
-  /** 见到下一个实字符时才决定是否补一个空格（折叠）。 */
-  let pendingSpace = false
-  const pushWord = (text: string): void => {
-    if (text === '') return
-    const last = out[out.length - 1]
-    if (pendingSpace && out.length > 0 && last !== undefined && !PUNCT_ADJACENT.test(last)) {
-      out.push(' ')
-    }
-    pendingSpace = false
-    out.push(text)
-  }
-  while (i < n) {
+  while (i < sql.length) {
     const ch = sql[i]
-    // 注释（字面量之外）
+    if (isSpaceCh(ch)) { i++; continue }
     if (ch === '-' && sql[i + 1] === '-') {
-      while (i < n && sql[i] !== '\n') i += 1
+      while (i < sql.length && sql[i] !== '\n') i++
       continue
     }
     if (ch === '/' && sql[i + 1] === '*') {
       i += 2
-      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1
-      i = Math.min(n, i + 2)
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
+      i = Math.min(sql.length, i + 2)
       continue
     }
-    // 字符串字面量：整体原样保留（内部空白/大小写是数据）
-    if (ch === "'") {
-      let j = i + 1
-      while (j < n) {
-        if (sql[j] === "'") {
-          if (sql[j + 1] === "'") {
-            j += 2
-            continue
-          }
-          j += 1
-          break
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      const start = i++, close = ch === '[' ? ']' : ch
+      let content = '', closed = false
+      while (i < sql.length) {
+        if (sql[i] === close) {
+          if (ch !== '[' && sql[i + 1] === close) { content += close; i += 2; continue }
+          i++; closed = true; break
         }
-        j += 1
+        content += sql[i++]
       }
-      pushWord(sql.slice(i, j))
-      i = j
+      const name = foldSqliteIdentifier(content)
+      const text = ch === "'" || !closed ? sql.slice(start, i) :
+        /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
+      tokens.push({ text, punct: false, bare: false })
       continue
     }
-    // 标识符引号：只删包裹引号，保留被引标识符本身
-    if (ch === '"' || ch === '`') {
-      i += sql[i + 1] === ch ? 2 : 1
-      continue
-    }
-    if (ch === '[') {
-      const close = sql.indexOf(']', i + 1)
-      i = close === -1 ? n : close + 1
-      continue
-    }
-    // 空白：折叠为一个待定空格
-    if (isSpaceCh(ch)) {
-      pendingSpace = true
-      i += 1
-      continue
-    }
-    // IF NOT EXISTS：删除关键字
-    const ifEnd = matchIfNotExists(sql, i)
-    if (ifEnd !== null) {
-      pendingSpace = true
-      i = ifEnd
-      continue
-    }
-    // 标点/运算符：两侧不留空白
     if (PUNCT_ADJACENT.test(ch)) {
-      pendingSpace = false
-      out.push(ch)
-      i += 1
-      continue
+      tokens.push({ text: ch, punct: true, bare: false }); i++; continue
     }
-    // 标识符 / 数字 / 其它：按整词推进（逐字也可，但整词更易读）
-    let j = i
-    while (
-      j < n &&
-      !isSpaceCh(sql[j]) &&
-      !PUNCT_ADJACENT.test(sql[j]) &&
-      sql[j] !== "'" &&
-      sql[j] !== '"' &&
-      sql[j] !== '`' &&
-      sql[j] !== '['
-    ) {
-      j += 1
-    }
-    pushWord(sql.slice(i, j).toLowerCase())
-    i = j
+    const start = i++
+    while (i < sql.length && !isSpaceCh(sql[i]) && !PUNCT_ADJACENT.test(sql[i]) &&
+      !["'", '"', '`', '['].includes(sql[i])) i++
+    tokens.push({ text: foldSqliteIdentifier(sql.slice(start, i)), punct: false, bare: true })
+  }
+  const out: string[] = []
+  let lastPunct = true
+  for (let t = 0; t < tokens.length; t++) {
+    // Only unquoted keyword tokens; comment boundaries cannot fuse IF/NOT/EXISTS.
+    if (tokens[t].bare && tokens[t].text === 'if' &&
+      tokens[t + 1]?.bare && tokens[t + 1].text === 'not' &&
+      tokens[t + 2]?.bare && tokens[t + 2].text === 'exists') { t += 2; continue }
+    const token = tokens[t]
+    if (!lastPunct && !token.punct) out.push(' ')
+    out.push(token.text)
+    lastPunct = token.punct
   }
   return out.join('')
 }
@@ -220,7 +146,7 @@ function readSchemaObjects(db: Database, type: SqliteObjectType): Record<string,
     )
     .all(type) as { name: string; sql: string }[]
   const out: Record<string, string> = {}
-  for (const r of rows) out[r.name] = normalizeSchemaDdl(r.sql)
+  for (const r of rows) out[foldSqliteIdentifier(r.name)] = normalizeSchemaDdl(r.sql)
   return out
 }
 
@@ -234,10 +160,10 @@ function readTableContracts(db: Database): Record<string, ProductionTableContrac
     const cols = db
       .prepare(`PRAGMA table_info("${r.name.replace(/"/g, '""')}")`)
       .all() as { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }[]
-    out[r.name] = {
-      name: r.name,
+    out[foldSqliteIdentifier(r.name)] = {
+      name: foldSqliteIdentifier(r.name),
       autoincrement: /\bautoincrement\b/i.test(r.sql),
-      columns: cols.map((c) => ({ name: c.name, type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
+      columns: cols.map((c) => ({ name: foldSqliteIdentifier(c.name), type: c.type, notnull: c.notnull, dflt: c.dflt_value, pk: c.pk })),
       sql: normalizeSchemaDdl(r.sql),
     }
   }
@@ -252,7 +178,7 @@ export function getProductionSchemaContract(): ProductionSchemaContract {
   const names = new Set<string>()
   const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`\[]?([A-Za-z_][A-Za-z0-9_]*)["'`\]]?/gi
   let m: RegExpExecArray | null
-  while ((m = re.exec(schemaSqlText)) !== null) names.add(m[1])
+  while ((m = re.exec(schemaSqlText)) !== null) names.add(foldSqliteIdentifier(m[1]))
   const tables = [...names]
   const mem = new DatabaseCtor(':memory:')
   try {
@@ -284,6 +210,12 @@ export function getProductionSchemaContract(): ProductionSchemaContract {
  * journal 持久化契约（B6）：同目录临时文件 → 写完 → 文件 fsync → 原子 rename → 尽力 fsync 父目录。
  */
 export interface RestoreFileOps {
+  /** 孤儿恢复预检也经 seam；exists 不代替 lstat（悬空链接必须拒绝）。 */
+  existsSync: (path: string) => boolean
+  lstatSync: (path: string) => Stats
+  realpathSync: (path: string) => string
+  readdirSync: (path: string) => string[]
+  mkdtempSync: (prefix: string) => string
   rmSync: (path: string, opts?: { force?: boolean; recursive?: boolean }) => void
   renameSync: (oldPath: string, newPath: string) => void
   copyFileSync: (src: string, dst: string) => void
@@ -411,6 +343,11 @@ function defaultAtomicWriteJson(file: string, data: string): void {
 }
 
 const defaultRestoreFileOps: RestoreFileOps = {
+  existsSync: (p) => existsSync(p),
+  lstatSync: (p) => lstatSync(p),
+  realpathSync: (p) => realpathSync(p),
+  readdirSync: (p) => readdirSync(p),
+  mkdtempSync: (p) => mkdtempSync(p),
   rmSync: (p, o) => fsRmSync(p, o as { force?: boolean }),
   renameSync: (a, b) => fsRenameSync(a, b),
   copyFileSync: (s, d) => fsCopyFileSync(s, d),
@@ -613,7 +550,7 @@ export function listPendingRestoreArtifacts(targetDbFile: string): string[] {
   const dir = dirname(targetDbFile)
   const base = basename(targetDbFile)
   const artifacts = existsSync(dir)
-    ? readdirSync(dir).filter((name) => name.startsWith(`${base}.restore-`))
+    ? readdirSync(dir).filter((name) => name.startsWith(`${base}.restore-`) || name.startsWith(`.${base}.restore-quarantine-`))
     : []
   if (artifacts.length === 0) return []
   // 目标缺失：任何恢复工件都不得被当成「首次启动」（与既有 B1/R6 行为一致，保持保守）。
@@ -622,6 +559,8 @@ export function listPendingRestoreArtifacts(targetDbFile: string): string[] {
   const residues = residuesFileOf(targetDbFile)
   const forward = `${targetDbFile}.restore-forward`
   const pending = artifacts.filter((name) => {
+    // 隔离证据：有效目标时不阻断；目标缺失时由上面的整集合守卫拒绝造空库。
+    if (name.startsWith(`.${base}.restore-quarantine-`)) return false
     // 残留清单：记录，不是未完成工件。
     if (name === residues || name === basename(residues)) return false
     // 回滚槽（主文件或 sidecar）：按设计保留的能力，不是未完成工件。
@@ -756,6 +695,103 @@ export function replaceWithRollback(candidateDbFile: string, targetDbFile: strin
   }
 }
 
+/** 无正式 journal：只隔离尚未提交的候选/临时日志，绝不猜测 forward 的归属。 */
+function quarantineOrphanRestoreArtifacts(targetDbFile: string, dekHex?: string): void {
+  const dir = resolve(dirname(targetDbFile))
+  const base = basename(targetDbFile)
+  if (!restoreFileOps.existsSync(dir)) return
+  const names = restoreFileOps.readdirSync(dir)
+  if (
+    !restoreFileOps.existsSync(targetDbFile) &&
+    names.some((name) => name.startsWith(`.${base}.restore-quarantine-`))
+  ) {
+    throw new Error('目标账本缺失但隔离恢复证据仍在，拒绝新建空账本（请人工核对）')
+  }
+  const pendingNames = names.filter((name) => name.startsWith(`${base}.restore-`))
+  const rollbackNames = SIDECARS.map((suffix) => `${base}.restore-rollback${suffix}`)
+  const orphans: string[] = []
+  for (const name of pendingNames) {
+    if (rollbackNames.includes(name) || name === `${base}.restore-residues.json`) continue
+    const candidatePrefix = `${base}.restore-candidate-`
+    const tmpPrefix = `${base}.restore-journal.json.tmp-`
+    if (
+      (name.startsWith(candidatePrefix) && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(name.slice(candidatePrefix.length))) ||
+      (name.startsWith(tmpPrefix) && /^\d+(?:-\d+)?$/.test(name.slice(tmpPrefix.length)))
+    ) {
+      orphans.push(join(dir, name))
+    } else {
+      throw new Error(`无正式恢复日志且工件状态未知，拒绝自动恢复并保留全部证据：${name}`)
+    }
+  }
+  if (orphans.length === 0) return
+
+  // 必须先预检全部路径，后打开目标，最后才 rename。悬空链接不能被 exists=false 隐藏。
+  const root = restoreFileOps.realpathSync(dir)
+  const assertRegularFile = (file: string, label: string, nonempty = false): void => {
+    const full = resolve(file)
+    if (dirname(full) !== dir) throw new Error(`${label}路径越界，拒绝自动恢复：${file}`)
+    const exists = restoreFileOps.existsSync(full)
+    const st = restoreFileOps.lstatSync(full)
+    if (!exists || st.isSymbolicLink() || !st.isFile() || (nonempty && st.size === 0)) {
+      throw new Error(`${label}缺失、为空或不是普通非链接文件，拒绝自动恢复：${file}`)
+    }
+    if (dirname(restoreFileOps.realpathSync(full)) !== root) {
+      throw new Error(`${label}解析路径越界，拒绝自动恢复：${file}`)
+    }
+  }
+  for (const file of orphans) assertRegularFile(file, '孤儿恢复工件')
+  assertRegularFile(targetDbFile, '孤儿恢复目标账本', true)
+  const targetSidecars: string[] = []
+  for (const suffix of ['-wal', '-shm', '-journal']) {
+    const file = `${targetDbFile}${suffix}`
+    let present = restoreFileOps.existsSync(file)
+    try {
+      restoreFileOps.lstatSync(file)
+      present = true
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    if (present) {
+      assertRegularFile(file, '孤儿恢复目标附属文件')
+      targetSidecars.push(file)
+    }
+  }
+  if (!dekHex || !/^[0-9a-fA-F]{64}$/.test(dekHex)) {
+    throw new Error('孤儿恢复缺少有效目标 DEK，拒绝自动恢复并保留全部证据')
+  }
+  // SQLite 的 readonly 也会改写 WAL 的 shm 读标记；只在自有隔离副本上验证，
+  // 将 main/wal/shm/journal 一起复制以验证真实目标的完整状态，不触碰唯一证据。
+  const stagingDir = restoreFileOps.mkdtempSync(join(tmpdir(), 'mz-orphan-validate-'))
+  const staging = join(stagingDir, basename(targetDbFile))
+  try {
+    restoreFileOps.copyFileSync(targetDbFile, staging)
+    for (const file of targetSidecars) restoreFileOps.copyFileSync(file, `${staging}${file.slice(targetDbFile.length)}`)
+    const db = new DatabaseCtor(staging, { readonly: true, fileMustExist: true })
+    try {
+      db.pragma(`key = "x'${dekHex}'"`)
+      db.pragma(`cipher='${CIPHER}'`)
+      validateLedgerDatabase(db, '孤儿恢复目标账本')
+    } finally {
+      db.close()
+    }
+  } finally {
+    restoreFileOps.rmSync(stagingDir, { recursive: true, force: true })
+  }
+
+  for (const file of orphans) {
+    // 点前缀不属于 openLedger 的未完成工件；原 basename 留在名字里，证据可追溯。
+    const evidence = join(dir, `.${base}.restore-quarantine-${randomBytes(16).toString('hex')}-${basename(file)}`)
+    if (restoreFileOps.existsSync(evidence)) throw new Error(`隔离证据路径已存在，拒绝覆盖：${evidence}`)
+    try {
+      restoreFileOps.lstatSync(evidence)
+      throw new Error(`隔离证据路径已存在，拒绝覆盖：${evidence}`)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    restoreFileOps.renameSync(file, evidence)
+  }
+}
+
 export type InterruptedRestoreOutcome = 'no-op' | 'recovered-original' | 'recovered-candidate' | 'recovered-rollback'
 
 /**
@@ -784,15 +820,40 @@ export function recoverInterruptedRestore(
   }
   // B6：journal 内的全部工件路径必须经统一白名单校验
   if (journal) {
+    if (
+      typeof journal.candidate !== 'string' || !journal.candidate ||
+      typeof journal.rollback !== 'string' || !journal.rollback ||
+      typeof journal.forward !== 'string' || !journal.forward ||
+      !basename(journal.candidate).startsWith(`${basename(targetDbFile)}.restore-candidate-`) ||
+      resolve(journal.rollback) !== resolve(rollback) ||
+      resolve(journal.forward) !== resolve(`${targetDbFile}.restore-forward`)
+    ) {
+      throw new Error('恢复日志损坏（工件字段缺失或槽位角色不匹配），拒绝自动恢复并保留全部磁盘证据')
+    }
     assertRestoreArtifact(targetDbFile, journal.candidate, '恢复日志候选')
     assertRestoreArtifact(targetDbFile, journal.rollback, '恢复日志回滚槽')
     assertRestoreArtifact(targetDbFile, journal.forward, '恢复日志前向槽')
+    // replacing 不使用 forward：其存在就是未知冲突，必须在消费候选/搬回回滚槽之前拒绝。
+    if (journal.phase === 'replacing') {
+      for (const suffix of [...SIDECARS, '-journal']) {
+        const file = `${journal.forward}${suffix}`
+        let present = restoreFileOps.existsSync(file)
+        try {
+          restoreFileOps.lstatSync(file)
+          present = true
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        }
+        if (present) throw new Error('账本恢复尚未收敛（forward 前向槽状态未知），journal 与全部磁盘证据已保留')
+      }
+    }
   }
   const targetExists = existsSync(targetDbFile)
   if (!journal) {
     if (!targetExists && (existsSync(rollback) || existsSync(`${rollback}-wal`) || existsSync(`${rollback}-shm`))) {
       throw new Error('检测到未完成的账本恢复：目标库缺失但回滚副本仍在，拒绝新建空账本（请先完成恢复）')
     }
+    quarantineOrphanRestoreArtifacts(targetDbFile, opts?.dekHex)
     return 'no-op'
   }
   // B5/B6：rollback 与正向恢复共用同一 journal；按 phase 分流收敛。

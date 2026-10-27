@@ -1,9 +1,13 @@
 // IPC 面：渲染层唯一入口。类型化 handler，全部走主进程模块。
 
-import { ipcMain, nativeTheme, type WebContents } from 'electron'
+import { ipcMain, nativeTheme, nativeImage, type WebContents } from 'electron'
+import { createHash } from 'node:crypto'
+import { convertToPng } from '@earendil-works/pi-coding-agent'
+import { imageMagicMatches } from './attachment-files'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import type { AppConfigDTO, LedgerFilter, ThemeName, TxEditOp } from '../shared/types'
+import type { AppConfigDTO, LedgerFilter, ThemeName, TransactionSplitItemInput, TxEditOp } from '../shared/types'
 import { normalizeTheme, type ConfigStore, type AppConfig } from './config/store'
+import { getTransactionEditForm } from './domain/transaction-date-type'
 import type { SecretsStore } from './secrets/store'
 import type { Engine } from './engine/engine'
 import type { EngineRegistry } from './engine/registry'
@@ -11,7 +15,12 @@ import { PROVIDER_PRESETS, testConnection, visionCheck, type ProviderProbeInput 
 import { parseSessionHistory } from './history'
 import { buildOpenGateCards } from './domain/gates'
 import { stageBill } from './domain/bill'
+import { describeImportException, resolveImportException, confirmImportExceptionRecord } from './domain/import-exceptions'
+import type { ResolveImportExceptionInput } from '../shared/types'
 import { firstAttachmentRef } from './domain/pending'
+import { getTransactionAttachments, addTransactionAttachments, removeTransactionAttachment, primaryTransactionAttachmentRef, validateAttachmentTxId, validateAddTransactionAttachmentsInput } from './domain/transaction-attachments'
+import type { AddTxAttachmentsInput, RemoveTxAttachmentInput } from '../shared/types'
+import { getTransactionActions, getTransactionSplitPlan, prepareTransactionSplit, setTransactionExcluded, undoTransactionSplit } from './domain/transaction-actions'
 import { previousMonth } from './domain/queries'
 import {
   emptyLedgerAgg,
@@ -22,7 +31,13 @@ import {
   writeConfidenceThreshold,
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
+import { getBatchPresentation, setBatchPresentation } from './domain/view-state'
+import type { BatchPresentationDTO, PanelHistorySnapshotDTO } from '../shared/types'
 import { listMonthSummaries } from './domain/reports'
+import { listAccountSummaries } from './domain/account-summary'
+import { createAccount, renameAccountById } from './domain/accounts'
+import { createCategory, renameCategory } from './domain/categories'
+import type { CreateAccountInput, RenameAccountInput, CreateCategoryInput, RenameCategoryInput } from '../shared/types'
 import { applyClassify, buildClassifyProposal, getClassifyResults, prepareClassify, undoClassify, validateBatchId } from './domain/classify'
 import { listCategoryRules, saveCategoryRule, updateCategoryRule, deactivateCategoryRule } from './domain/category-rules'
 import type { SaveCategoryRuleInput, UpdateCategoryRuleInput, DeactivateCategoryRuleInput } from '../shared/types'
@@ -176,9 +191,11 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
   //  它与 mz:testConnection 完全同签名，留着只会让人以为"编辑模式要走这条"；
   //  编辑模式的空 Key 回落已由上面 mz:testConnection 一并处理。）
 
-  ipcMain.handle('mz:confirmRecord', (_e, txId: number, categoryName?: string) =>
-    ctx.engines.get().confirmRecord(txId, categoryName),
-  )
+  ipcMain.handle('mz:confirmRecord', async (_e, txId: number, categoryName?: string) => {
+    const db = ctx.getDb()
+    const originalImport = db ? confirmImportExceptionRecord(db, txId, categoryName) : null
+    return originalImport ?? ctx.engines.get().confirmRecord(txId, categoryName)
+  })
 
   // 第 8 单：账单材料逐行入库（渲染层只负责把表格拆成二维数组，之后由 Agent 读、程序套表解析）
   ipcMain.handle(
@@ -202,9 +219,13 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     },
   )
 
-  ipcMain.handle('mz:confirmGate', (_e, gateId: number) => ctx.engines.get().confirmGate(gateId))
+  ipcMain.handle('mz:confirmGate', (_e, gateId: number, expectedVersion?: string) => ctx.engines.get().confirmGate(gateId, expectedVersion))
   ipcMain.handle('mz:cancelGate', (_e, gateId: number) => ctx.engines.get().cancelGate(gateId))
   ipcMain.handle('mz:editTx', (_e, txId: number, op: TxEditOp) => ctx.engines.get().editTx(txId, op))
+  ipcMain.handle('mz:getTransactionEditForm', (_e, txId: number) => {
+    const db = ctx.getDb()
+    return db ? getTransactionEditForm(db, txId) : null
+  })
 
   ipcMain.handle('mz:listCategories', () => {
     const db = ctx.getDb()
@@ -221,6 +242,68 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     return answerPending(db, gateId, answer, { sessionId: ctx.engines.get().sessionId, via: 'panel' })
   })
 
+  ipcMain.handle('mz:getImportException', (_e, gateId: number) => {
+    if (!Number.isSafeInteger(gateId) || gateId <= 0) throw new Error('待办ID无效')
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return describeImportException(db, gateId)
+  })
+  ipcMain.handle('mz:resolveImportException', (_e, input: ResolveImportExceptionInput) => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return resolveImportException(db, input, {sessionId:'ui-import-exception', via:'panel'})
+  })
+  // Direct local UI actions: dynamic DB/directory, no Engine/tool/model invocation.
+  const attachmentContext = () => {
+    const attachmentsDir = ctx.getAttachmentsDir()
+    if (!attachmentsDir) throw new Error('附件目录未就绪')
+    return { attachmentsDir, validateImage: (bytes: Buffer, _mediaType: string): boolean => {
+      try { return !nativeImage.createFromBuffer(bytes).isEmpty() } catch { return false }
+    } }
+  }
+  ipcMain.handle('mz:listTransactionAttachments', (_e, txId: number) => {
+    validateAttachmentTxId(txId)
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return getTransactionAttachments(db, txId, attachmentContext().attachmentsDir)
+  })
+  ipcMain.handle('mz:addTransactionAttachments', (_e, input: AddTxAttachmentsInput) => {
+    validateAddTransactionAttachmentsInput(input)
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    const context = attachmentContext()
+    const extended = input.files.filter(file => file.mediaType === 'image/gif' || file.mediaType === 'image/webp')
+    if (!extended.length) return addTransactionAttachments(db, input, context)
+    // Electron nativeImage supports PNG/JPEG, not GIF/WebP on Windows. Use the already
+    // installed pi Photon decoder to PNG IN MEMORY, then require a real native decode.
+    // Preserve original bytes/MIME on disk. No window, model, network or new dependency.
+    const current = getTransactionAttachments(db, input.txId, context.attachmentsDir)
+    if (current.version !== input.expectedVersion) throw new Error('附件或交易版本过期，请刷新后重新复核')
+    const transaction = db.prepare('SELECT state FROM transactions WHERE id=?').get(input.txId)
+    if (transaction?.state === 'deleted') throw new Error('这笔交易已删除，请先恢复后再修改附件')
+    const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+    const decoded = new Map<string, boolean>()
+    return (async () => {
+      for (const file of extended) {
+        const bytes = Buffer.from(file.dataBase64, 'base64')
+        if (!imageMagicMatches(bytes, file.mediaType)) throw new Error('图片内容与声明格式不一致')
+        const converted = await convertToPng(file.dataBase64, file.mediaType)
+        if (!converted || !context.validateImage(Buffer.from(converted.data, 'base64'), 'image/png')) throw new Error('图片内容损坏或无法解码')
+        decoded.set(digest(bytes), true)
+      }
+      // A restore may replace the DB while conversion yields. Never use the old handle.
+      if (ctx.getDb() !== db || ctx.getAttachmentsDir() !== context.attachmentsDir) throw new Error('账本已切换，请刷新后重新复核附件')
+      return addTransactionAttachments(db, input, { ...context, validateImage: (bytes, mediaType) =>
+        mediaType === 'image/gif' || mediaType === 'image/webp' ? decoded.get(digest(bytes)) === true : context.validateImage(bytes, mediaType),
+      }) // Domain rechecks the version after conversion, before any file/SQL write.
+    })()
+  })
+  ipcMain.handle('mz:removeTransactionAttachment', (_e, input: RemoveTxAttachmentInput) => {
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    return removeTransactionAttachment(db, input, attachmentContext())
+  })
+
   ipcMain.handle('mz:txDetail', (_e, txId: number) => {
     const db = ctx.getDb()
     if (!db) return null
@@ -231,12 +314,7 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
         ' LEFT JOIN accounts ta ON ta.id=t.to_account_id WHERE t.id=?',
     ).get(txId) as Record<string, unknown> | undefined
     if (!tx) return null
-    const smid = (tx.source_message_id as string | null) ?? null
-    const imp = smid
-      ? (db.prepare('SELECT source_ref FROM imports WHERE source_message_id = ? AND source_ref IS NOT NULL ORDER BY id DESC LIMIT 1').get(smid) as
-          | { source_ref: string | null }
-          | undefined)
-      : undefined
+    const attachmentRef = primaryTransactionAttachmentRef(db, txId)
     const audits = db
       .prepare("SELECT change_type, changed_by, reasoning, confidence_score, changed_at, before_value, after_value" +
         " FROM audit_log WHERE entity_type='transaction' AND entity_id=? ORDER BY id")
@@ -256,7 +334,7 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
         note: (tx.note as string | null) ?? null,
       },
       /** 段4-2：来源附件原图（attachments/ 相对名，可点开）+ 入库时间。 */
-      attachmentRef: imp?.source_ref ?? null,
+      attachmentRef,
       createdAt: String(tx.created_at ?? ''),
       audit: audits.map((a) => ({
         changeType: a.change_type,
@@ -276,8 +354,8 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     const db = ctx.getDb()
     if (!db) return []
     const rows = db
-      .prepare("SELECT id, field, question, tx_id, created_at, payload FROM pending_clarifications WHERE status='open' ORDER BY id DESC")
-      .all() as unknown as { id: number; field: string; question: string; tx_id: number | null; created_at: string; payload: string | null }[]
+      .prepare("SELECT id, field, question, tx_id, created_at, payload, revision FROM pending_clarifications WHERE status='open' ORDER BY id DESC")
+      .all() as unknown as { id: number; field: string; question: string; tx_id: number | null; created_at: string; payload: string | null; revision: number }[]
     // 交易摘要：一次按 tx_id 批量查 transactions（无 txId 事项保持原样不填）
     const txIds = [...new Set(rows.map((r) => r.tx_id).filter((v): v is number => v !== null))]
     const txMap = new Map<number, { merchant: string | null; amountCents: number; occurredAt: string }>()
@@ -304,6 +382,8 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
       const tx = r.tx_id !== null ? txMap.get(r.tx_id) : undefined
       return {
         gateId: r.id,
+        revision: r.revision,
+        importException: describeImportException(db, r.id),
         field: r.field,
         question: r.question,
         txId: r.tx_id,
@@ -382,6 +462,29 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     if (!db) throw new Error('账本未就绪')
     return db
   }
+  // 账户/分类管理：不经过模型；运行时验证由领域入口执行，不信任 TS 类型。
+  ipcMain.handle('mz:getAccountSummary', (_e, month?: string) => listAccountSummaries(requireDb(), month))
+  ipcMain.handle('mz:createAccount', (_e, input: CreateAccountInput) => createAccount(requireDb(), input))
+  ipcMain.handle('mz:renameAccount', (_e, input: RenameAccountInput) => renameAccountById(requireDb(), input))
+  ipcMain.handle('mz:createCategory', (_e, input: CreateCategoryInput) => createCategory(requireDb(), input))
+  ipcMain.handle('mz:renameCategory', (_e, input: RenameCategoryInput) => renameCategory(requireDb(), input))
+  ipcMain.handle('mz:getBatchPresentation', (_e, gateId: number) => getBatchPresentation(requireDb(), gateId))
+  ipcMain.handle('mz:setBatchPresentation', (_e, gateId: number, patch: Partial<BatchPresentationDTO>) => setBatchPresentation(requireDb(), gateId, patch))
+
+  ipcMain.handle('mz:getTransactionActions', (_e, txId: number) => getTransactionActions(requireDb(), txId))
+  ipcMain.handle('mz:getTransactionSplitPlan', (_e, gateId: number) => getTransactionSplitPlan(requireDb(), gateId))
+  ipcMain.handle('mz:prepareTransactionSplit', (_e, input: { txId: number; expectedVersion: string; items: TransactionSplitItemInput[] }) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.expectedVersion !== 'string' || !input.expectedVersion || !Array.isArray(input.items)) {
+      throw new Error('拆账方案参数无效，请重新读取交易后重试')
+    }
+    return prepareTransactionSplit(requireDb(), input, { via: 'panel', sessionId: 'ui-transaction-actions' })
+  })
+  ipcMain.handle('mz:undoTransactionSplit', (_e, input: { gateId: number; expectedVersion: string }) =>
+    undoTransactionSplit(requireDb(), input, { via: 'panel' }),
+  )
+  ipcMain.handle('mz:setTransactionExcluded', (_e, input: { txId: number; expectedVersion: string; excluded: boolean }) =>
+    setTransactionExcluded(requireDb(), input, { via: 'panel' }),
+  )
   ipcMain.handle('mz:prepareClassify', (_e, input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion?: string }) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('归类参数无效')
     if (typeof input.expectedProposalVersion !== 'string' || !input.expectedProposalVersion) throw new Error('归类建议版本缺失，请重新读取并复核')
@@ -408,6 +511,15 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     const db = ctx.getDb()
     if (!db) throw new Error('账本未就绪')
     return undoClassify(db, classifyId)
+  })
+
+  ipcMain.handle('mz:getPanelHistory', (): PanelHistorySnapshotDTO => {
+    const engine = ctx.engines.tryGet()
+    if (!engine) return { sessionId: null, streamId: null, eventCursor: 0, busy: false, messages: [] }
+    // 同一主进程同步调用中拍状态并读 JSONL，期间不 await、不发模型请求。
+    const state = engine.panelHistoryState
+    const file = engine.sessionFile
+    return { ...state, messages: file ? parseSessionHistory(file, 300, { strict: true }) : [] }
   })
 
   ipcMain.handle('mz:loadHistory', () => {

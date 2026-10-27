@@ -1,18 +1,10 @@
-// 收件箱右栏三卡（§3.1 末节）：
-//   ① 本月速览 → **本月**口径走 listLedger({month: 本月, state:'confirmed'}).agg
-//                （真·本月已确认收支 + 分类 top3 + 预算剩余；预算额取 getSettingsInfo）
-//                上月对照走 latestReport()——注意这条通道返回的是**上一个自然月**月报
-//                （src/main/ipc.ts 用 previousMonth()），所以只当"上月"用，绝不冒充本月。
-//   ② 本地数据 → getSettingsInfo() + listSnapshots()（锁标放大版 + 立即快照）
-//   ③ AI 记忆  → 后端无此能力（规格 §6 第 4 条），做禁用占位，**不编造任何数字**；
-//                文案只留用户看得懂的一句——规格条款、接口细节不上屏。
-//
-// 视觉数值全部走 tokens.css 的 var()，不新增自由配色。
+// 收件箱右栏：本月速览与轻量安全状态，详情和快照/备份经真实设置分页可达。
 
 import type { ReactElement } from 'react'
 import type { ReportCardData } from '../../../shared/types'
 import { useInbox } from '../shell/inboxStore'
-import { money, shortPath, snapshotFreshness } from '../lib/shellFormat'
+import { money, snapshotFreshness } from '../lib/shellFormat'
+import '../styles/inbox-aside.css'
 
 /** 本月聚合（来自 listLedger 的 agg，由 InboxView 传进来；右栏自己不重复打 IPC）。 */
 export interface MonthAgg {
@@ -43,13 +35,15 @@ export function InboxAside({
   month,
   lastReport,
   reportError,
+  onOpenSettings,
 }: {
   agg: MonthAgg | null
   month: string
   lastReport: ReportCardData | null
   reportError: string | null
+  onOpenSettings: (tab: 'storage' | 'billing') => void
 }): ReactElement {
-  const { settings, snapshots, pendingCount, busy, runSnapshot } = useInbox()
+  const { settings, snapshots, pendingCount } = useInbox()
   const lastSnap = snapshots[0]?.mtime ?? settings?.lastSnapshot?.mtime ?? null
   const fresh = snapshotFreshness(lastSnap)
   const topCats = (agg?.byCategory ?? []).slice(0, 3)
@@ -60,42 +54,6 @@ export function InboxAside({
 
   return (
     <aside className="mz-aside" data-testid="inbox-aside">
-      {/* ① 本地数据（§2.3 锁标的放大版） */}
-      <section className="mz-panel" data-testid="aside-local">
-        <h3 className="mz-panel-title">
-          <span className="mz-lock-ico">{LOCK_ICON}</span>
-          本地数据
-        </h3>
-        <div className="mz-safe-row">
-          <span className="mz-lock-ico mz-lock-green">{LOCK_ICON}</span>
-          <span>已加密 · 仅存在本机</span>
-        </div>
-        <div className="mz-kv">
-          <span>数据目录</span>
-          <span className="mz-v" title={settings?.dataDir ?? ''}>
-            {shortPath(settings?.dataDir ?? '')}
-          </span>
-        </div>
-        <div className="mz-kv">
-          <span>上次快照</span>
-          <span className={`mz-v mz-num${fresh.stale ? ' mz-stale' : ''}`} data-testid="aside-snapshot">
-            {fresh.text}
-          </span>
-        </div>
-        <div className="mz-actions">
-          <button
-            type="button"
-            className="mz-btn mz-btn-ghost mz-btn-block"
-            data-testid="aside-snapshot-btn"
-            disabled={busy !== null}
-            onClick={() => {
-              void runSnapshot()
-            }}
-          >
-            立即快照
-          </button>
-        </div>
-      </section>
 
       {/* ① 本月速览（本月口径 = listLedger 的 agg，与「今天已记」同一次查询，不额外打 IPC） */}
       <section className="mz-panel" data-testid="aside-report">
@@ -147,11 +105,16 @@ export function InboxAside({
         </div>
       </section>
 
-      {/* ③ AI 记忆：后端无此通道（规格 §6 第 4 条），如实占位，不填假数字 */}
-      <section className="mz-panel mz-panel-disabled" data-testid="aside-memory">
-        <h3 className="mz-panel-title">AI 记忆</h3>
-        <div className="mz-panel-empty">待后端支持</div>
-        <div className="mz-panel-hint">记忆功能还在开发中，接上再按真数据上屏。</div>
+      <section className="mz-aside-security" data-testid="aside-security">
+        <div className="mz-aside-security-head">
+          <span className="mz-lock-ico">{LOCK_ICON}</span>
+          <span>账本本地加密</span>
+          <span className={fresh.stale ? 'mz-stale' : 'mz-text-3'} data-testid="aside-snapshot">{fresh.text}</span>
+        </div>
+        <div className="mz-aside-links">
+          <button type="button" data-testid="aside-data-settings" onClick={() => onOpenSettings('storage')}>数据与隐私 <span aria-hidden="true">↗</span></button>
+          <button type="button" data-testid="aside-backup-settings" onClick={() => onOpenSettings('billing')}>快照与备份 <span aria-hidden="true">↗</span></button>
+        </div>
       </section>
     </aside>
   )

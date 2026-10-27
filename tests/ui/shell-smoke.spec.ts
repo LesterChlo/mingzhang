@@ -13,7 +13,7 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { mkdtempSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { makeWechatXlsxBuffer } from '../xlsx-fixture'
+import { makeWechatXlsxBuffer, makeKnownAccountWechatXlsxBuffer } from '../xlsx-fixture'
 import { startFakeProvider } from '../fake-provider'
 import { confirmSingleRecord } from './single-record-fixture'
 
@@ -76,7 +76,8 @@ test('外壳② 五屏都可达（切屏后选中态跟随）', async () => {
   await expect(page.getByTestId('report-view')).toBeVisible()
 
   await page.getByTestId('nav-accounts').click()
-  await expect(page.getByTestId('view-placeholder')).toContainText('账户')
+  // issue #25: the same navigation assertion now targets the real accounts screen.
+  await expect(page.getByTestId('accounts-view')).toBeVisible()
 
   // 设置屏复用既有 SettingsView：能进去、能看见它自己的小标题
   await page.getByTestId('nav-settings').click()
@@ -426,12 +427,13 @@ test.describe('收件箱（真实数据）', () => {
     await expect(page.getByTestId('report-view')).toBeVisible()
     await page.getByTestId('nav-inbox').click()
 
-    // 右栏三卡即使空态也在（本地数据 / 本月速览 / AI 记忆）
-    await expect(page.getByTestId('aside-local')).toBeVisible()
+    // Issue31 approved relocation: no placeholder/detail card; real summary and settings links remain.
+    await expect(page.getByTestId('aside-local')).toHaveCount(0)
     await expect(page.getByTestId('aside-report')).toBeVisible()
-    await expect(page.getByTestId('aside-memory')).toBeVisible()
-    // AI 记忆：后端无此通道，如实占位，绝不编数字
-    await expect(page.getByTestId('aside-memory')).toContainText('待后端支持')
+    await expect(page.getByTestId('aside-memory')).toHaveCount(0)
+    await expect(page.getByTestId('aside-security')).toHaveCount(1)
+    await expect(page.getByTestId('aside-data-settings')).toHaveCount(1)
+    await expect(page.getByTestId('aside-backup-settings')).toHaveCount(1)
   })
 
   test('收件箱② 速记行可输入：回车提交 → 出现待决卡（含依据行与逐行明细）', async () => {
@@ -508,12 +510,16 @@ test.describe('收件箱（真实数据）', () => {
     await today.locator('button').click() // 收回，保持用例可重复
   })
 
-  test('收件箱④ 待核对卡就地补答：answerPending 通道真通，队列清空回空态', async () => {
+  test('收件箱④ 原行结构化补录：明确缺项后队列清空回空态', async () => {
     const rest = page.locator('[data-testid="inbox-card"][data-kind="batch_item"]')
     await expect(rest).toBeVisible()
 
-    await rest.getByLabel(/补金额/).fill('15 餐饮')
-    await rest.getByRole('button', { name: '补录' }).click()
+    await rest.getByTestId('exception-amount').fill('15')
+    if(await rest.getByTestId('exception-type').count()) await rest.getByTestId('exception-type').selectOption('expense')
+    if(await rest.getByTestId('exception-date').count()) await rest.getByTestId('exception-date').fill(new Date().toISOString().slice(0,10))
+    if(await rest.getByTestId('exception-account').count()) await rest.getByTestId('exception-account').selectOption({label:'银行卡'})
+    await rest.getByTestId('exception-category').selectOption({label:'餐饮'})
+    await rest.getByTestId('exception-submit').click()
 
     // 补答后队列清空，回到空态；角标与待决数一起归零
     await expect(page.getByTestId('inbox-card')).toHaveCount(0)
@@ -549,7 +555,7 @@ test.describe('收件箱（真实数据）', () => {
     await expect(page.getByTestId('inbox-empty')).toBeVisible()
   })
 
-  test('收件箱⑥ 转账缺账户卡：如实显示原因，只给「忽略」，不给假按钮', async () => {
+  test('收件箱⑥ 转账缺账户卡：提供原行真实补录，不给自由答案假按钮', async () => {
     // 离线演示剧本：含转账的批次 → 确认入账后，零钱通那笔缺转出/转入账户 → transfer_account 待办
     const cap = page.getByLabel('速记行')
     await cap.fill('账单里有零钱通转入')
@@ -563,9 +569,12 @@ test.describe('收件箱（真实数据）', () => {
     await expect(tr).toBeVisible()
     await expect(tr).toContainText('待补账户')
     await expect(tr.getByTestId('inbox-basis')).toContainText('依据：')
-    // 后端对转账待办拒绝「就地作答」，所以不该出现补录框或确认按钮
+    // Versioned exception uses the structured original-row API, not free-text answerPending.
     await expect(tr.getByTestId('inbox-confirm')).toHaveCount(0)
     await expect(tr.getByLabel(/补金额/)).toHaveCount(0)
+    await expect(tr.getByTestId('exception-form')).toBeVisible()
+    await expect(tr.getByTestId('exception-submit')).toBeVisible()
+    await expect(tr.getByTestId('exception-to-account')).toBeVisible()
     await expect(tr.getByRole('button', { name: '忽略' })).toBeVisible()
 
     // 忽略即关闭这条待办
@@ -737,19 +746,34 @@ test.describe('账本（真实数据）', () => {
     await page.getByTestId('ledger-clear-all').click()
   })
 
-  test('账本⑤ 待后端项是诚实的禁用态：日期/类型/拆账/标记不计收支', async () => {
+  test('账本⑤ 日期/类型、拆账与不计收支均为真实入口，打开详情只读', async () => {
     // ④ 已经选中了这行，而行点击是**开关式**（再点一次取消选中），所以这里只在
     // 详情栏没开时才点——否则会把刚开的面板又关掉。
     if ((await page.getByTestId('ledger-detail').count()) === 0) {
       await page.locator('[data-testid="ledger-row"]').first().click()
     }
-    const todo = page.getByTestId('ledger-backend-todo')
-    await expect(todo).toBeVisible()
+    await expect(page.getByTestId('ledger-date-type')).toHaveAttribute('aria-busy', 'false')
+    await expect(page.getByTestId('ledger-edit-date')).toBeEnabled()
+    await expect(page.getByTestId('ledger-edit-direction')).toBeEnabled()
+    await expect(page.getByTestId('ledger-todo-date')).toHaveCount(0)
+    await expect(page.getByTestId('ledger-todo-type')).toHaveCount(0)
+    // 日期/类型与拆账/不计收支均已接通，旧禁用占位不应再出现。
+    await expect(page.getByTestId('ledger-backend-todo')).toHaveCount(0)
     for (const id of ['date', 'type', 'split', 'adjust']) {
-      await expect(page.getByTestId(`ledger-todo-${id}`)).toBeDisabled()
+      await expect(page.getByTestId(`ledger-todo-${id}`)).toHaveCount(0)
     }
-    // 原因逐条写清，不给假按钮
-    await expect(todo).toContainText('待后端')
+    await expect(page.getByTestId('ledger-actions')).toHaveAttribute('aria-busy', 'false')
+    const before = await page.evaluate(() => window.mz.listLedger({}))
+    const history = await page.evaluate(() => window.mz.loadHistory())
+    await expect(page.getByTestId('ledger-split-open')).toBeEnabled()
+    await expect(page.getByTestId('ledger-exclude-toggle')).toBeEnabled()
+    await expect(page.getByTestId('ledger-todo-split')).toHaveCount(0)
+    await expect(page.getByTestId('ledger-todo-adjust')).toHaveCount(0)
+    expect(await page.evaluate(() => window.mz.listLedger({}))).toEqual(before)
+    const afterHistory = await page.evaluate(() => window.mz.loadHistory())
+    expect(afterHistory.filter(m => m.role === 'user').length).toBe(history.filter(m => m.role === 'user').length)
+    // 已合入稳定历史 ID：打开详情连 ID 在内都不得改写历史。
+    expect(afterHistory).toEqual(history)
   })
 
   test('账本⑥ 删除 → 实测口径：直接软删，收件箱**不**出现删除确认卡', async () => {
@@ -1136,7 +1160,7 @@ test.describe('批次结果条（真实数据）', () => {
     await barPage.getByTestId('nav-inbox').click()
     const capture = barPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await barPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)
@@ -1220,19 +1244,22 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('open-import-review')).toHaveText('直接复核本批分类')
   })
 
-  test('结果条② 折叠组：重复行逐行列出，不计收支组如实说「逐行明细待后端」', async () => {
+  test('结果条② 折叠组：重复与不计收支来源逐行核对，不伪造空明细', async () => {
     await ensureBatches(1)
     const bar = barPage.getByTestId('batch-result-bar')
     await expect(bar).toBeVisible()
 
-    // 不计收支组：数字在，但逐行明细后端拿不到 → 必须**说出来**，不许拿空数组冒充
+    // issue #28 replaces the old placeholder with complete persisted source rows; keep all counts and no-write guards.
     const exToggle = bar.getByTestId('br-excluded-toggle')
     await expect(exToggle).toHaveText('▸ 不计收支 1 行')
     await exToggle.click()
     const exNote = bar.getByTestId('br-excluded-note')
     await expect(exNote).toBeVisible()
-    await expect(exNote).toContainText('共 1 行按方案不计收支')
-    await expect(exNote, '后端没给的明细被编成了「没有不计收支的行」').toContainText('逐行明细待后端')
+    const stored = await barPage.evaluate(() => window.mz.getBatchResult())
+    expect(stored!.excludedRows).toHaveLength(1)
+    await expect(exNote.getByTestId('br-excluded-row')).toHaveCount(1)
+    await expect(exNote.getByTestId('br-excluded-row')).toContainText(stored!.excludedRows![0].reason)
+    await expect(exNote.getByTestId('br-excluded-legacy')).toHaveCount(0)
     // D-01 未实现 → 绝不渲染「全部恢复为正常收支」这类无依赖按钮
     await expect(bar.getByRole('button', { name: /恢复为正常收支/ })).toHaveCount(0)
 
@@ -1262,7 +1289,7 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('import-review-workspace')).toHaveCount(0)
   })
 
-  test('结果条④ 关闭是内存态：切屏往返仍是关闭态', async () => {
+  test('结果条④ 关闭状态持久保存：切屏和重载后仍关闭', async () => {
     await ensureBatches(1)
     await barPage.getByTestId('nav-inbox').click()
     const bar = barPage.getByTestId('batch-result-bar')
@@ -1272,12 +1299,22 @@ test.describe('批次结果条（真实数据）', () => {
     await expect(barPage.getByTestId('batch-result-bar'), '点了 ✕ 结果条还在').toHaveCount(0)
     await barPage.getByTestId('nav-ledger').click()
     await barPage.getByTestId('nav-inbox').click()
-    // D-04 跨重启持久化本单未实现：同一进程里关掉就该一直是关掉的
-    await expect(barPage.getByTestId('batch-result-bar'), '切屏往返后结果条自己回来了（本单只做内存态）').toHaveCount(0)
+    // issue #29: dismissed persists; a later readback test explicitly restores presentation only.
+    const result = await barPage.evaluate(() => window.mz.getBatchResult())
+    await expect.poll(() => barPage.evaluate(id => window.mz.getBatchPresentation(id), result!.gateId)).toMatchObject({ dismissed: true })
+    await expect(barPage.getByTestId('batch-result-bar'), '切屏往返后已关闭结果条自己回来了').toHaveCount(0)
+    await barPage.reload()
+    await barPage.waitForSelector('.mz-shell')
+    await expect(barPage.getByTestId('batch-result-bar'), '重载后关闭状态丢失').toHaveCount(0)
   })
 
   test('结果条⑤ 重载后按批次读回：待分类定掉 → 主按钮消失（退化为摘要行）', async () => {
     await ensureBatches(1)
+    // Restore only the previous test's persisted presentation, not ledger state or numeric assertions.
+    const preservedFacts = await barPage.evaluate(() => window.mz.listLedger({ limit: 100 }))
+    const result = await barPage.evaluate(() => window.mz.getBatchResult())
+    await barPage.evaluate(id => window.mz.setBatchPresentation(id, { dismissed: false }), result!.gateId)
+    expect(await barPage.evaluate(() => window.mz.listLedger({ limit: 100 }))).toEqual(preservedFacts)
     // 重载 = 全新渲染进程状态，唯一的「读回」真检验：数据只能来自库里那份批次方案
     await barPage.reload()
     await barPage.waitForSelector('.mz-shell', { timeout: 30_000 })
@@ -1353,7 +1390,7 @@ test.describe('助手面板与归类映射表（②B 真实数据）', () => {
     await panelPage.getByTestId('nav-inbox').click()
     const capture = panelPage.getByLabel('速记行')
     await capture.press('Escape')
-    const b64 = Buffer.from(new Uint8Array(makeWechatXlsxBuffer())).toString('base64')
+    const b64 = Buffer.from(new Uint8Array(makeKnownAccountWechatXlsxBuffer())).toString('base64')
     await panelPage.evaluate(
       ({ name, type, data }) => {
         const bin = atob(data)

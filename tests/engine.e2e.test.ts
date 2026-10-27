@@ -364,10 +364,13 @@ describe('引擎端到端（脚本化模型）', () => {
     expect((db.prepare('SELECT state s FROM transactions WHERE id=1').get() as { s: string }).s).toBe('confirmed')
   })
 
-  it('M1 拆账：金额和不符拒绝；正确拆分 = 原笔软删 + 子项 confirmed', async () => {
+  it('M1 拆账：金额不符拒绝；模型只备方案，界面确认才软删原笔并建 confirmed 分项', async () => {
     queue({ kind: 'tool', tool: { name: 'record', args: { amount_cents: 10000, tx_type: 'expense', merchant: '超市', category_name: '购物', confidence: 0.9 } } })
     queue({ kind: 'text', text: 'ok' })
     await engine.sendChat('超市 100', [])
+    // 先明确确认原笔，保留 base 的单笔确认红线，再测拆账。
+    queue({ kind: 'text', text: '已确认原笔入账。' })
+    expect((await engine.confirmRecord(1)).status).toBe('ok')
 
     // 错误拆分 → 工具抛错（isError），账目不变
     queue({ kind: 'tool', tool: { name: 'split', args: { tx_id: 1, items: [{ amount_cents: 6000 }, { amount_cents: 3000 }] } } })
@@ -377,10 +380,23 @@ describe('引擎端到端（脚本化模型）', () => {
     expect(errEnd.payload.isError).toBe(true)
     expect(txCount()).toBe(1)
 
-    // 正确拆分
+    // 模型仅准备方案：原交易、审计和统计必须完全未动。
+    const original = db.prepare('SELECT * FROM transactions WHERE id=1').get()
+    const auditsBefore = db.prepare('SELECT * FROM audit_log ORDER BY id').all()
     queue({ kind: 'tool', tool: { name: 'split', args: { tx_id: 1, items: [{ amount_cents: 6000, category_name: '餐饮' }, { amount_cents: 4000, category_name: '购物' }] } } })
-    queue({ kind: 'text', text: '拆好了。' })
+    queue({ kind: 'text', text: '方案已备好，请在界面确认。' })
     await engine.sendChat('拆成 60 餐饮 + 40 购物', [])
+    expect(txCount()).toBe(1)
+    expect(db.prepare('SELECT * FROM transactions WHERE id=1').get()).toEqual(original)
+    expect(db.prepare('SELECT * FROM audit_log ORDER BY id').all()).toEqual(auditsBefore)
+    const gate = db.prepare("SELECT id,status FROM pending_clarifications WHERE field='split_confirm'").get() as {id:number;status:string}
+    expect(gate.status).toBe('open')
+    const {getTransactionSplitPlan} = await import('../src/main/domain/transaction-actions')
+    const plan = getTransactionSplitPlan(db,gate.id)
+    expect(plan?.items.map(x=>x.amountCents)).toEqual([6000,4000])
+    queue({ kind: 'text', text: '已确认拆账。' })
+    const executed = await engine.confirmGate(gate.id,plan!.version)
+    expect(executed.status).toBe('ok')
     expect(txCount()).toBe(3)
     expect((db.prepare("SELECT state s FROM transactions WHERE id=1").get() as { s: string }).s).toBe('deleted')
     const subs = db.prepare("SELECT id, state, amount_cents c FROM transactions WHERE id>1 ORDER BY id").all() as unknown as { id: number; state: string; c: number }[]
@@ -527,8 +543,8 @@ describe('引擎端到端（脚本化模型）', () => {
           source_type: 'csv',
           channel: '支付宝',
           items: [
-            { amount_cents: 1250, tx_type: 'expense', merchant: '便利店', reliable_id: 'ORD-001', occurred_at: '2026-09-01T10:00:00+08:00' },
-            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-002', occurred_at: '2026-09-02T11:00:00+08:00' },
+            { amount_cents: 1250, tx_type: 'expense', merchant: '便利店', reliable_id: 'ORD-001', occurred_at: '2026-09-01T10:00:00+08:00', account_name: '支付宝' },
+            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-002', occurred_at: '2026-09-02T11:00:00+08:00', account_name: '支付宝' },
             { merchant: '信息不全的条目', reliable_id: 'ORD-003', source_text: '2026-09-03 12:00,信息不全的条目,,ORD-003' },
           ],
         },
@@ -556,13 +572,22 @@ ${csv}`, [])
       .get() as { n: number }
     expect(kept.n).toBe(1)
 
-    // 补答金额 → 入账 + 批次收口
+    // Issue24: model free-text cannot guess missing direction/date/account or close the original row.
     const item = db
       .prepare("SELECT id FROM pending_clarifications WHERE field='batch_item' AND status='open'")
       .get() as { id: number }
     queue({ kind: 'tool', tool: { name: 'pending', args: { action: 'answer', gate_id: item.id, answer: '15 餐饮' } } })
-    queue({ kind: 'text', text: '补上了。' })
+    queue({ kind: 'text', text: '请在原待办明确补齐。' })
     await engine.sendChat('那笔是 15 块，餐饮', [])
+    expect(txCount()).toBe(2)
+    expect(events.filter(e=>e.type==='tool-end').at(-1)?.payload?.isError).toBe(true)
+    expect(db.prepare('SELECT status FROM pending_clarifications WHERE id=?').get(item.id)).toEqual({status:'open'})
+    const {describeImportException,resolveImportException}=await import('../src/main/domain/import-exceptions')
+    const original=describeImportException(db,item.id)!
+    expect(original.missingFields).toEqual(['amountCents','txType','occurredAt','accountId'])
+    const accountId=(db.prepare("SELECT id FROM accounts WHERE name='银行卡'").get() as {id:number}).id
+    const categoryId=(db.prepare("SELECT id FROM categories WHERE name='餐饮' AND kind='expense'").get() as {id:number}).id
+    resolveImportException(db,{gateId:item.id,expectedVersion:original.version,fields:{amountCents:1500,txType:'expense',occurredAt:'2026-09-03 12:00:00',accountId,categoryId}},{sessionId:'synthetic-panel',via:'panel'})
     expect(txCount()).toBe(3)
     const imp2 = db.prepare("SELECT status FROM imports WHERE source_type='csv'").get() as { status: string }
     expect(imp2.status).toBe('confirmed') // 全部办结才收口
@@ -576,7 +601,7 @@ ${csv}`, [])
         args: {
           source_type: 'csv',
           channel: '支付宝',
-          items: [{ amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: orderId }],
+          items: [{ amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: orderId, occurred_at: '2026-09-01T10:00:00+08:00', account_name: '支付宝' }],
         },
       },
     })
@@ -599,7 +624,7 @@ ${csv}`, [])
           channel: '支付宝',
           items: [
             { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-A' },
-            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-B' },
+            { amount_cents: 2300, tx_type: 'expense', merchant: '面馆', reliable_id: 'ORD-B', occurred_at: '2026-09-02T11:00:00+08:00', account_name: '支付宝' },
           ],
         },
       },
@@ -651,7 +676,7 @@ ${csv}`, [])
   })
 
   it('GATE_FIELDS 常量：gate 类 pending 不允许对话补答（域层约束的实现锚点）', () => {
-    expect([...GATE_FIELDS].sort()).toEqual(['batch_classify', 'batch_confirm', 'delete_confirm'])
+    expect([...GATE_FIELDS].sort()).toEqual(['batch_classify', 'batch_confirm', 'delete_confirm', 'split_confirm'])
   })
 })
 

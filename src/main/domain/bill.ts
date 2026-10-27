@@ -4,9 +4,11 @@
 // 程序不猜：方案没覆盖到的列取值一律整批退回（不静默归类），把未覆盖取值回给模型改方案。
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
+import type { BatchExcludedRowDTO } from '../../shared/types'
 import { nowIso } from '../db/time'
 import { prepareBatch, type BatchItemInput, type BatchPlan } from './batch'
 import { listAccounts } from './ledger'
+import { validImportOccurredAt } from './import-exceptions'
 
 /** 一次入库的最大数据行数（超过要求按更短区间拆分，与字节上限无关）。 */
 export const MAX_BILL_ROWS = 5000
@@ -145,8 +147,8 @@ export function parseAmountCents(raw: string | undefined | null): { cents: numbe
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 const stamp = (y: number, m: number, d: number, hh: number, mm: number, ss: number): string | null => {
-  if (m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 59) return null
-  return `${y}-${pad(m)}-${pad(d)} ${pad(hh)}:${pad(mm)}:${pad(ss)}`
+  const value = `${y}-${pad(m)}-${pad(d)} ${pad(hh)}:${pad(mm)}:${pad(ss)}`
+  return validImportOccurredAt(value) ? value : null
 }
 
 /**
@@ -157,6 +159,7 @@ export function parseOccurredAt(raw: string | undefined | null, now: Date = new 
   if (!raw) return null
   const s = String(raw).trim()
   if (!s) return null
+  if (/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(s)) return validImportOccurredAt(s) ? s : null
 
   if (/^\d{14}$/.test(s)) {
     return stamp(+s.slice(0, 4), +s.slice(4, 6), +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14))
@@ -473,6 +476,7 @@ export function applyBillPlan(
   const items: BatchItemInput[] = []
   const dispositions: { no: number; disposition: 'planned' | 'skipped' | 'review'; reason: string | null }[] = []
   const skippedSamples: BillRowSample[] = []
+  const excludedRows: BatchExcludedRowDTO[] = []
   let skippedCount = 0
 
   for (const r of parsedRows) {
@@ -482,42 +486,29 @@ export function applyBillPlan(
     if (preSkip) {
       skippedCount += 1
       dispositions.push({ no: r.no, disposition: 'skipped', reason: preSkip })
+      excludedRows.push({
+        tableId: table.id,
+        rowNo: r.no,
+        sourceText: text,
+        merchant: cell(r.cells, resolved.merchant) || null,
+        amountCents: parseAmountCents(cell(r.cells, resolved.amount))?.cents ?? null,
+        occurredAt: parseOccurredAt(cell(r.cells, resolved.time)),
+        reason: preSkip,
+      })
       if (skippedSamples.length < 5) skippedSamples.push({ row: r.no, text, reason: preSkip })
       continue
     }
 
     const amt = parseAmountCents(cell(r.cells, resolved.amount))
-    if (!amt) {
-      const rawAmount = cell(r.cells, resolved.amount)
-      const reason = rawAmount ? `金额「${rawAmount}」解析不出` : '金额列为空'
-      dispositions.push({ no: r.no, disposition: 'review', reason })
-      items.push({ row_no: r.no, amount_cents: null, source_text: text, merchant: cell(r.cells, resolved.merchant) || null, review_reason: reason })
-      continue
-    }
-
+    const occurredAt = parseOccurredAt(cell(r.cells, resolved.time))
+    // 字段独立解析：金额/日期失败也保留原方向、账户及可靠交易号；例外不承接正常行的默认支出。
     let txType: BatchItemInput['tx_type']
     if (ov?.type && ov.type !== 'skip') txType = ov.type
     else {
       const mapped = mapValue(cell(r.cells, resolved.direction), plan.direction_column_values, DEFAULT_DIRECTION)
       if (mapped && mapped !== 'unmapped') txType = mapped
-      else if (plan.amount_signed) txType = amt.negative ? 'expense' : 'income'
-      else txType = plan.default_type ?? 'expense'
-    }
-
-    const occurredAt = parseOccurredAt(cell(r.cells, resolved.time))
-    const reason = occurredAt ? null : `交易时间「${cell(r.cells, resolved.time)}」解析不出`
-    if (!occurredAt) {
-      dispositions.push({ no: r.no, disposition: 'review', reason })
-      items.push({
-        row_no: r.no,
-        amount_cents: amt.cents,
-        tx_type: txType,
-        merchant: cell(r.cells, resolved.merchant) || null,
-        occurred_at: null,
-        source_text: text,
-        review_reason: reason ?? undefined,
-      })
-      continue
+      else if (plan.amount_signed) txType = amt ? (amt.negative ? 'expense' : 'income') : undefined
+      else txType = plan.default_type
     }
 
     let accountName: string | null = null
@@ -537,10 +528,13 @@ export function applyBillPlan(
       if (rule) categoryName = rule.category_name
     }
 
-    dispositions.push({ no: r.no, disposition: 'planned', reason: null })
+    const rawAmount = cell(r.cells, resolved.amount)
+    const reason = !amt ? (rawAmount ? `金额「${rawAmount}」解析不出` : '金额列为空') : !occurredAt ? `交易时间「${cell(r.cells, resolved.time)}」解析不出` : null
+    dispositions.push({ no: r.no, disposition: reason ? 'review' : 'planned', reason })
     items.push({
       row_no: r.no,
-      amount_cents: amt.cents,
+      amount_cents: amt?.cents ?? null,
+      review_reason: reason ?? undefined,
       tx_type: txType,
       merchant: cell(r.cells, resolved.merchant) || null,
       occurred_at: occurredAt,
@@ -552,7 +546,7 @@ export function applyBillPlan(
   }
 
   const newish = items.filter((i) => !i.review_reason)
-  const reviewCount = items.length - newish.length
+  let reviewCount = items.length - newish.length
   const rowsConsidered = parsedRows.length
 
   let out: BillApplyResult | null = null
@@ -561,7 +555,7 @@ export function applyBillPlan(
     let plan_: BatchPlan | null = null
     let newCount = 0
     let duplicateCount = 0
-    if (items.length > 0) {
+    if (items.length > 0 || excludedRows.length > 0) {
       const prep = prepareBatch(db, {
         items,
         channel: plan.channel ?? table.channel,
@@ -570,18 +564,20 @@ export function applyBillPlan(
         billTableId: table.id,
         rowsConsidered,
         skippedCount,
+        excludedRows,
       })
       gateId = prep.gateId
       plan_ = prep.plan
       newCount = prep.plan.newCount
       duplicateCount = prep.plan.duplicateCount
+      reviewCount = prep.plan.unparsedCount
       const gate = gateId
       const upd = db.prepare("UPDATE bill_rows SET disposition = ?, gate_id = ?, reason = ? WHERE table_id = ? AND row_no = ?")
       for (const it of prep.plan.items) {
         if (it.rowNo === null || it.rowNo === undefined) continue
         const d = dispositions.find((x) => x.no === it.rowNo)
         const disposition = it.status === 'unparsed' ? 'review' : 'planned'
-        upd.run(disposition, gate, d?.reason ?? null, table.id, it.rowNo)
+        upd.run(disposition, gate, d?.reason ?? (it.status === 'unparsed' ? it.reason ?? null : null), table.id, it.rowNo)
       }
     }
     const skipUpd = db.prepare("UPDATE bill_rows SET disposition = 'skipped', reason = ? WHERE table_id = ? AND row_no = ?")
@@ -595,7 +591,7 @@ export function applyBillPlan(
       throw new Error(`内部对账不平：材料 ${rowsConsidered} 行，但各项相加 ${accounted} 行（入账 ${newCount} + 重复 ${duplicateCount} + 待核对 ${reviewCount} + 不计 ${skippedCount}）`)
     }
     const after = getBillTable(db, table.id)
-    if (items.length > 0 && after && after.openRows !== 0) {
+    if (after && after.openRows !== 0) {
       throw new Error(`内部对账不平：处理后材料 #${table.id} 仍有 ${after.openRows} 行未被任何归宿覆盖`)
     }
     out = {

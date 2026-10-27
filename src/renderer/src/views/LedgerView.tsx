@@ -547,6 +547,7 @@ export function LedgerView({ initialFilter }: { initialFilter?: Partial<LedgerFi
 
       {selected && (
         <LedgerDetail
+          key={selected.id}
           txId={selected.id}
           onChanged={reload}
           onClose={() => setSelectedId(null)}

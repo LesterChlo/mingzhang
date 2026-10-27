@@ -70,13 +70,40 @@ export interface ChatEvent {
     | 'tx-restored' // 账本详情里恢复了一笔（UI 触发）
     | 'progress' // 引擎存活信号（思考期等无正文阶段；渲染层据此重置自己的保险丝）
     | 'thinking-delta' // 思考正文增量（契约 A：模型 thinking 期间把 inner.delta 如实推给界面）
+    | 'session-changed' // 新开/续接会话成功，重新取历史快照
     | 'error' // 错误
+  sessionId?: string
+  streamId?: string
+  eventSeq?: number
   // biome-ignore lint/suspicious/noExplicitAny: 事件载荷按 type 区分，此处从简
   payload?: any
 }
 
+/** 单笔编辑表单只读快照；version 是主进程生成的不透明并发令牌。 */
+export interface TransactionEditFormDTO {
+  txId: number
+  version: string
+  occurredAt: string
+  txType: 'expense' | 'income' | 'transfer' | 'adjustment'
+  state: string
+  categoryId: number | null
+  accountId: number
+  toAccountId: number | null
+}
+
+export interface TransactionDateTypeEditInput {
+  txId: number
+  expectedVersion: string
+  fields: {
+    occurredAt?: string
+    txType?: 'expense' | 'income'
+    categoryId?: number | null
+  }
+}
+
 /** 第 6 单 段4-2：详情抽屉动作组——对某一笔直接动手的入参（全部 changed_by='user' + 审计）。 */
 export type TxEditOp =
+  | { op: 'dateType'; expectedVersion: string; fields: TransactionDateTypeEditInput['fields'] }
   | {
       op: 'set'
       fields: { categoryName?: string; amountCents?: number; merchant?: string; note?: string; accountName?: string }
@@ -127,6 +154,55 @@ export interface SplitCardData {
   kind: 'split'
   originalId: number
   cards: TransactionCardData[]
+}
+
+export interface TransactionActionsDTO {
+  txId: number
+  version: string
+  txType: 'expense' | 'income' | 'transfer' | 'adjustment'
+  state: string
+  amountCents: number
+  canSplit: boolean
+  canExclude: boolean
+  excluded: boolean
+  openSplitGateId: number | null
+  undoSplit: { gateId: number; version: string; originalId: number; canUndo: boolean; reason: string | null } | null
+  reason: string | null
+}
+
+export interface TransactionSplitItemInput {
+  amountCents: number
+  categoryId?: number
+  merchant?: string | null
+  note?: string | null
+}
+
+export interface TransactionSplitItemDTO {
+  amountCents: number
+  categoryId: number
+  categoryName: string
+  merchant: string | null
+  note: string | null
+}
+
+export interface TransactionSplitPlanDTO {
+  gateId: number
+  version: string
+  original: TransactionCardData['tx']
+  items: TransactionSplitItemDTO[]
+  totalCents: number
+}
+
+export interface TransactionSplitResultDTO {
+  gateId: number
+  originalId: number
+  childIds: number[]
+  version: string
+}
+
+export interface SplitGateCardData {
+  kind: 'split-gate'
+  plan: TransactionSplitPlanDTO
 }
 
 export interface ReportCardData {
@@ -328,6 +404,7 @@ export type CardData =
   | DeleteGateCardData
   | RuleCardData
   | SplitCardData
+  | SplitGateCardData
   | ReportCardData
   | BatchGateCardData
   | BatchResultCardData
@@ -373,7 +450,49 @@ export interface SettingsInfoDTO {
   uiFallbackWaitMs: number
 }
 
+export type ImportExceptionField = 'amountCents' | 'txType' | 'occurredAt' | 'accountId' | 'toAccountId'
+export type ImportExceptionTxType = 'expense' | 'income' | 'transfer' | 'adjustment'
+
+export interface ImportExceptionDTO {
+  gateId: number
+  version: string
+  missingFields: ImportExceptionField[]
+  values: {
+    amountCents: number | null
+    txType: ImportExceptionTxType | null
+    occurredAt: string | null
+    accountId: number | null
+    toAccountId: number | null
+    categoryId: number | null
+  }
+  source: {
+    batchId: string | null
+    importId: number | null
+    tableId: number | null
+    rowNo: number | null
+    sourceText: string | null
+    merchant: string | null
+    accountName: string | null
+  }
+  reason: string
+}
+
+export interface ResolveImportExceptionInput {
+  gateId: number
+  expectedVersion: string
+  fields: {
+    amountCents?: number
+    txType?: ImportExceptionTxType
+    occurredAt?: string
+    accountId?: number
+    toAccountId?: number
+    categoryId?: number
+  }
+}
+
 export interface PendingItemDTO {
+  revision?: number
+  importException?: ImportExceptionDTO | null
   gateId: number
   field: string
   question: string
@@ -402,6 +521,22 @@ export interface AuditEntryDTO {
   beforeRaw?: Record<string, unknown> | null
   afterRaw?: Record<string, unknown> | null
 }
+
+export interface TxAttachmentDTO {
+  ref: string
+  fileName: string
+  mediaType: string
+  byteLength: number
+  available: boolean
+}
+export interface TxAttachmentListDTO {
+  version: string
+  items: TxAttachmentDTO[]
+  limits: { maxCount: number; maxFileBytes: number; maxTotalBytes: number }
+}
+export interface TxAttachmentFileInput { fileName: string; mediaType: string; dataBase64: string }
+export interface AddTxAttachmentsInput { txId: number; expectedVersion: string; files: TxAttachmentFileInput[] }
+export interface RemoveTxAttachmentInput { txId: number; expectedVersion: string; ref: string }
 
 export interface TxDetailDTO {
   tx: TransactionCardData['tx']
@@ -468,6 +603,31 @@ export interface AccountOption {
   createdAt: string
 }
 
+export interface CreateAccountInput {
+  name: string
+  type: 'cash' | 'bank' | 'alipay' | 'wechat'
+}
+export interface RenameAccountInput {
+  accountId: number
+  expectedName: string
+  newName: string
+}
+export interface CreateCategoryInput {
+  name: string
+  kind: 'expense' | 'income'
+}
+export interface RenameCategoryInput {
+  categoryId: number
+  expectedName: string
+  newName: string
+}
+
+/** 账户本月已记流水：只含 confirmed 收支，无期初信息，不能当余额。 */
+export interface AccountSummaryDTO {
+  month: string
+  accounts: Array<AccountOption & { expenseCents: number; incomeCents: number; count: number }>
+}
+
 export interface LedgerPageDTO {
   items: LedgerRow[]
   total: number
@@ -487,6 +647,17 @@ export interface LedgerAgg {
   reviewExpenseCents: number
   /** 已确认支出的分类构成（按金额降序）。 */
   byCategory: { category: string; cents: number; count: number }[]
+}
+
+/** 确定性套表时保存的不计收支行：金额/时间解析不出保留 null，不重读可变原表。 */
+export interface BatchExcludedRowDTO {
+  tableId: number
+  rowNo: number
+  sourceText: string
+  merchant: string | null
+  amountCents: number | null
+  occurredAt: string | null
+  reason: string
 }
 
 /**
@@ -515,8 +686,22 @@ export interface BatchResultSummaryDTO {
   }
   /** 重复行逐行明细（能带出来）。 */
   duplicatesRows: { merchant: string | null; amountCents: number | null; reason: string }[]
-  /** 不计收支的逐行明细：本单未实现（D-03b）→ 恒 null。UI 必须显式说明「逐行明细待后端」，不许拿空数组冒充。 */
-  excludedRows: null
+  /** 套表时冻结的完整明细；旧批未保存可靠来源为 null，已保存且零排除可为 []。 */
+  excludedRows: BatchExcludedRowDTO[] | null
+}
+
+export interface BatchPresentationDTO {
+  dismissed: boolean
+  duplicatesOpen: boolean
+  excludedOpen: boolean
+}
+
+export interface PanelHistorySnapshotDTO {
+  sessionId: string | null
+  streamId: string | null
+  eventCursor: number
+  busy: boolean
+  messages: ChatMessageDTO[]
 }
 
 export interface ChatMessageDTO {
@@ -526,6 +711,9 @@ export interface ChatMessageDTO {
   streaming?: boolean
   card?: CardData
   toolName?: string
+  toolCallId?: string
+  timestamp?: number
+  thinkingText?: string
   isError?: boolean
   /** 用户消息自带图片（发送时与历史恢复时都保留，气泡内渲染缩略图）。 */
   images?: { previewUrl: string; fileName: string }[]
@@ -565,14 +753,30 @@ export interface MingZhangApi {
   /** 确认入账（UI 按钮专用）。支出/收入缺分类时必须给 categoryName（UI 下拉选择）。返回语义化结果。 */
   confirmRecord: (txId: number, categoryName?: string) => Promise<ExecResult>
   /** 确认门执行（删除/批次），仅 UI 确认按钮调用。返回语义化结果。 */
-  confirmGate: (gateId: number) => Promise<ExecResult>
+  confirmGate: (gateId: number, expectedVersion?: string) => Promise<ExecResult>
+  getTransactionActions: (txId: number) => Promise<TransactionActionsDTO | null>
+  getTransactionSplitPlan: (gateId: number) => Promise<TransactionSplitPlanDTO | null>
+  prepareTransactionSplit: (input: { txId: number; expectedVersion: string; items: TransactionSplitItemInput[] }) => Promise<TransactionSplitPlanDTO>
+  undoTransactionSplit: (input: { gateId: number; expectedVersion: string }) => Promise<TransactionActionsDTO>
+  setTransactionExcluded: (input: { txId: number; expectedVersion: string; excluded: boolean }) => Promise<TransactionActionsDTO>
   cancelGate: (gateId: number) => Promise<ExecResult>
   /** 段4-2：详情抽屉动作组——改字段 / 删除 / 恢复 / 补转账账户（均 changed_by='user' + 审计）。 */
   editTx: (txId: number, op: TxEditOp) => Promise<ExecResult>
+  getTransactionEditForm: (txId: number) => Promise<TransactionEditFormDTO | null>
   listCategories: () => Promise<{ id: number; name: string; kind: string }[]>
   listPending: () => Promise<PendingItemDTO[]>
+  getImportException: (gateId: number) => Promise<ImportExceptionDTO | null>
+  resolveImportException: (input: ResolveImportExceptionInput) => Promise<{txId:number;card:TransactionCardData;text:string}>
   /** 账户列表（账户屏 + 账本屏账户筛选下拉）。不含余额——accounts 表无期初余额列。 */
   listAccounts: () => Promise<AccountOption[]>
+  /** 本地自然月 confirmed 收支流水，纯读，不含余额。非法月份与账本未就绪均拒绝。 */
+  getAccountSummary: (month?: string) => Promise<AccountSummaryDTO>
+  createAccount: (input: CreateAccountInput) => Promise<number>
+  /** 按 ID + 显示的原名称校验过期；成功与审计原子提交。 */
+  renameAccount: (input: RenameAccountInput) => Promise<void>
+  createCategory: (input: CreateCategoryInput) => Promise<number>
+  /** 同方向习惯同步改名；无方向歧义旧习惯须先处理。 */
+  renameCategory: (input: RenameCategoryInput) => Promise<void>
   /** 月报：传 'YYYY-MM' 取该月；不传取上一个自然月（收件箱右栏「上月对照」靠这条）。 */
   latestReport: (month?: string) => Promise<ReportCardData | null>
   /** 报告屏历史月份网格：近 N 个月（含空月，从早到晚）。不传 N = 12。非法 N 由主进程报错。 */
@@ -609,6 +813,9 @@ export interface MingZhangApi {
   applyClassify: (gateId: number, rows?: ClassifyAssignmentInput[]) => Promise<ClassifyResultDTO | null>
   /** D-01：整体撤销一次批量归类（按 classifyId 定位，只回退没被后续改过的笔）。 */
   undoClassify: (classifyId: string) => Promise<ClassifyUndoResultDTO>
+  listTransactionAttachments: (txId: number) => Promise<TxAttachmentListDTO>
+  addTransactionAttachments: (input: AddTxAttachmentsInput) => Promise<TxAttachmentListDTO>
+  removeTransactionAttachment: (input: RemoveTxAttachmentInput) => Promise<TxAttachmentListDTO>
   txDetail: (txId: number) => Promise<TxDetailDTO | null>
   /** A2：open 的 delete/batch gate 就地重建卡片（待收尾直接执行，不依赖对话卡片）。 */
   pendingGateCards: () => Promise<PendingGateCardDTO[]>
@@ -623,4 +830,8 @@ export interface MingZhangApi {
   continueSession: (path: string) => Promise<boolean>
   /** 加载当前会话历史（重启后可见之前的对话，含工具卡片与图片）。 */
   loadHistory: () => Promise<ChatMessageDTO[]>
+  /** 同步主进程快照，游标之后的事件可由渲染层缓冲重放。 */
+  getPanelHistory: () => Promise<PanelHistorySnapshotDTO>
+  getBatchPresentation: (gateId: number) => Promise<BatchPresentationDTO>
+  setBatchPresentation: (gateId: number, patch: Partial<BatchPresentationDTO>) => Promise<BatchPresentationDTO>
 }

@@ -5,6 +5,7 @@
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { nowIso } from '../db/time'
 
 interface ChatMessage {
   role: string
@@ -77,9 +78,11 @@ function billColumns(msgs: ChatMessage[]): {
   const merchant = pick(/交易对方|商户|商品/)
   const id = pick(/交易单号|流水号|订单号|单号/)
   const direction = pick(/收\/支|收支|收-支/)
+  const account = pick(/^(支付方式|收\/付款方式|支付账户|付款账户|账户(?:名|名称)?)$/)
   if (merchant) columns.merchant = merchant
   if (id) columns.id = id
   if (direction) columns.direction = direction
+  if (account) columns.account = account
   const fileM = /来源文件「(.*?)」/.exec(t)
   const file = fileM?.[1] ?? ''
   const channel = /微信/.test(file + t) ? '微信支付' : /支付宝/.test(file + t) ? '支付宝' : null
@@ -136,10 +139,53 @@ function classifyAssignments(toolText: string | null): { group_key: string; cate
   return out
 }
 
+/** 通知只按已知结果生成回执；任意说明/写作指令不作为回复内容。 */
+function notificationReply(text: string): string {
+  const unknown = '（离线演示）暂时无法确认这次操作的结果，请查看界面和账本状态。'
+  const validCount = (value: string, minimum = 0): boolean => Number.isSafeInteger(Number(value)) && Number(value) >= minimum
+  if (/^系统通知：用户取消了刚才的删除操作，账目未变。/.test(text)) {
+    return '已取消删除，账目未变。'
+  }
+  const failure = /^系统通知：((?:批次执行|批次|批量归类|归类|删除|入账|执行|操作)?)(失败|未完成)(?:，(账目未改变|账目未变))?。/.exec(text)
+  if (failure) return `${failure[1] || '操作'}${failure[2]}${failure[3] ? `，${failure[3]}` : ''}。`
+  // batchFollowUpSummary 的结果在第二句，转账结果还在后段；不靠截第一句净化。
+  const result = /^系统通知：用户已在界面确认批次入账。已完成 (\d+) 笔（其中 (\d+) 笔缺分类转待确认），重复跳过 (\d+) 笔，缺金额待核对 (\d+) 笔(?:；(\d+) 笔转账因缺转入\/转出账户未入账（([\s\S]*)）(?=。(?:请主动逐笔追问用户这笔转账的「转出账户」和「转入账户」|请引导用户在这笔原待办里补齐「转出账户」和「转入账户」，保留原金额，提交后继续补记原行；不要另记一笔或忽略原待办，不要臆造账户。)))?。/.exec(text)
+  if (result) {
+    if (!result.slice(1, 5).every((value) => validCount(value)) || Number(result[2]) > Number(result[1]) || (result[5] !== undefined && !validCount(result[5], 1))) return unknown
+    let reply = `批次已处理：已完成 ${result[1]} 笔（其中 ${result[2]} 笔缺分类转待确认），重复跳过 ${result[3]} 笔，缺金额待核对 ${result[4]} 笔。`
+    if (result[5]) {
+      // 商户字段来自材料，可能夹指令；只提取逐笔金额，绝不原样回显这个自由文本。
+      const amounts = [...result[6].matchAll(/ ¥(-?\d+\.\d{2})(?=、(?!\s*¥-?\d+\.\d{2}(?:、|$))|$)/g)].map((m) => `¥${m[1]}`)
+      const details = amounts.length === Number(result[5]) ? `（金额：${amounts.join('、')}）` : '（金额明细请查看待收尾）'
+      reply += `${result[5]} 笔转账因缺转入/转出账户未入账${details}。这些转账还需补充转出账户和转入账户。`
+    }
+    return reply
+  }
+  const deleted = /^系统通知：用户已在界面确认删除（交易 #(\d+)，现状态 deleted）。/.exec(text)
+  if (deleted) return validCount(deleted[1], 1) ? `交易 #${deleted[1]} 已删除，可随时恢复。` : unknown
+  const record = /^系统通知：用户已在界面确认入账（交易 #(\d+)，现状态 confirmed）。/.exec(text)
+  if (record) return validCount(record[1], 1) ? `交易 #${record[1]} 已入账。` : unknown
+  const batch = /^系统通知：批次已入账 (\d+) 笔。/.exec(text)
+  if (batch) return validCount(batch[1]) ? `批次已入账 ${batch[1]} 笔。` : unknown
+  const classifiedBatch = /^系统通知：用户已在界面确认批量归类，(\d+) 笔入账（(\d+) 组）。/.exec(text)
+  if (classifiedBatch) {
+    if (!validCount(classifiedBatch[1]) || !validCount(classifiedBatch[2]) || Number(classifiedBatch[2]) > Number(classifiedBatch[1])) return unknown
+    return `已归类并入账 ${classifiedBatch[1]} 笔（${classifiedBatch[2]} 组）。`
+  }
+  const classified = /^系统通知：已归类 (\d+) 笔。/.exec(text)
+  if (classified) return validCount(classified[1]) ? `已归类 ${classified[1]} 笔。` : unknown
+  return unknown
+}
+
 export function decide(
   messages: ChatMessage[],
   lastTxId = 0,
 ): { kind: 'tool'; name: string; args: Record<string, unknown> } | { kind: 'text'; text: string } {
+  const t = userText(messages).trim()
+  // 通知优先于工具结果/两步剧本：只知会，不再下单，也不把内部工具文本当回执。
+  if (/^系统通知/.test(t)) {
+    return { kind: 'text', text: notificationReply(t) }
+  }
   const toolResult = lastToolResultText(messages)
   // 第 8 单剧本：读完表（read_bill 回来）→ 交一份从列名确定性推出来的读表方案
   if (lastToolName(messages) === 'read_bill' && toolResult) {
@@ -147,6 +193,41 @@ export function decide(
     if (b) {
       const args: Record<string, unknown> = { table_id: b.tableId, columns: b.columns }
       if (b.channel) args.channel = b.channel
+      if (b.columns.account) {
+        // 账户只认原表完整单元格，不用包含映射（「零钱通」「未知银行卡」不能冒充已知账户）。
+        // 先读完本表，再逐行给显式账户；未识别值仍由原表预检拒绝，空白仍是缺账户待办。
+        const more = /^（还有第 (\d+) 行起的 \d+ 行没看，继续 read_bill）$/m.exec(toolResult)
+        if (more) {
+          return { kind: 'tool', name: 'read_bill', args: { table_id: b.tableId, from_row: Number(more[1]), limit: 200 } }
+        }
+        const accounts = new Map([
+          ['零钱', '微信'], ['余额', '支付宝'],
+          ['微信', '微信'], ['支付宝', '支付宝'], ['现金', '现金'], ['银行卡', '银行卡'],
+        ])
+        const rowOverrides: { rows: number[]; account_name: string }[] = []
+        for (let i = messages.length - 1; i >= 0 && messages[i].role !== 'user'; i--) {
+          const msg = messages[i]
+          if (msg.role !== 'tool') continue
+          const text = typeof msg.content === 'string' ? msg.content : msg.content.map((p) => p.text ?? '').join('')
+          if (!text.startsWith(`材料 #${b.tableId}（`)) continue
+          const headers = [...text.matchAll(/^表头：(.*)$/gm)]
+          if (headers.length !== 1) continue
+          const header = headers[0][1].split(' | ')
+          const accountIndex = header.indexOf(b.columns.account)
+          if (accountIndex < 0) continue
+          const range = /^第 (\d+)–(\d+) 行：$/m.exec(text)
+          const rows = [...text.matchAll(/^(\d+)\| (.*)$/gm)]
+          // 换行也可能伪造行号；行数、连续行号及列数都对上才解释这一页。
+          if (!range || rows.length !== Number(range[2]) - Number(range[1]) + 1 ||
+            rows.some((r, n) => Number(r[1]) !== Number(range[1]) + n || r[2].split(' | ').length !== header.length)) continue
+          for (const match of rows) {
+            const cells = match[2].split(' | ')
+            const account_name = accounts.get(cells[accountIndex].trim())
+            if (account_name) rowOverrides.push({ rows: [Number(match[1])], account_name })
+          }
+        }
+        if (rowOverrides.length) args.row_overrides = rowOverrides
+      }
       if (b.columns.direction) {
         // 演示用确定性口径：微信账单里 收/支 为「不计收支」或「/」的行都不算账
         args.skip_when = [
@@ -179,15 +260,6 @@ export function decide(
   if (toolResult) {
     return { kind: 'text', text: toolResult }
   }
-  const text = userText(messages)
-  const t = text.trim()
-
-  // 系统通知（确认门 followUp 等）只知会，不触发任何规则——否则会重复下单。
-  // 回执复述结果摘要（含逐项交代）：这条 assistant 回复会持久化进会话，重启后历史可见。
-  if (/^系统通知/.test(t)) {
-    return { kind: 'text', text: `收到，已执行。${t.replace(/^系统通知：/, '')}` }
-  }
-
   // 账单材料已入库（消息里带 table_id 与列名样本）→ 先读表再出方案，绝不逐行报数
   const staged = billColumns(messages)
   if (staged) {
@@ -238,9 +310,9 @@ export function decide(
         source_type: 'csv',
         channel: '演示渠道',
         items: [
-          { amount_cents: 2000, tx_type: 'expense', merchant: '演示打车', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-t1`, occurred_at: null, category_name: '交通' },
-          { amount_cents: 10152, tx_type: 'transfer', merchant: '零钱通转入', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t2`, source_text: '零钱通转入 101.52' },
-          { amount_cents: 800, tx_type: 'expense', merchant: '演示早餐', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t3`, occurred_at: null, category_name: '餐饮' },
+          { amount_cents: 2000, tx_type: 'expense', merchant: '演示打车', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-t1`, occurred_at: nowIso(), account_name: '微信', category_name: '交通' },
+          { amount_cents: 10152, tx_type: 'transfer', merchant: '零钱通转入', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t2`, source_text: '零钱通转入 101.52', occurred_at: nowIso(), account_name: '微信' },
+          { amount_cents: 800, tx_type: 'expense', merchant: '演示早餐', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-t3`, occurred_at: nowIso(), account_name: '微信', category_name: '餐饮' },
         ],
       },
     }
@@ -254,8 +326,8 @@ export function decide(
         source_type: 'csv',
         channel: '演示渠道',
         items: [
-          { amount_cents: 1200, tx_type: 'expense', merchant: '演示甲', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-001`, occurred_at: null, category_name: '购物' },
-          { amount_cents: 3400, tx_type: 'expense', merchant: '演示乙', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-002`, occurred_at: null, category_name: '餐饮' },
+          { amount_cents: 1200, tx_type: 'expense', merchant: '演示甲', reliable_id: `DEMO-${Date.now().toString(36)}-${++mockBatchSeq}-001`, occurred_at: nowIso(), account_name: '微信', category_name: '购物' },
+          { amount_cents: 3400, tx_type: 'expense', merchant: '演示乙', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-002`, occurred_at: nowIso(), account_name: '微信', category_name: '餐饮' },
           { merchant: '演示丙（金额缺失）', reliable_id: `DEMO-${Date.now().toString(36)}-${mockBatchSeq}-003`, source_text: '演示丙，金额看不清' },
         ],
       },

@@ -12,6 +12,8 @@ export interface SettingsRouteProps {
   /** T0928 §1：编辑按行落点——传入该行预设 id（此前两路合一，新增会被开成编辑当前预设）。 */
   onEditProvider: (id: string) => void
   onContinueSession: () => void
+  initialTab?: 'model' | 'billing' | 'storage'
+  returnLabel?: string
 }
 
 export function SettingsRoute({
@@ -21,6 +23,8 @@ export function SettingsRoute({
   onAddProvider,
   onEditProvider,
   onContinueSession,
+  initialTab,
+  returnLabel,
 }: SettingsRouteProps): ReactElement {
   return (
     <div className="mz-route-scroll" data-testid="settings-route">
@@ -31,6 +35,8 @@ export function SettingsRoute({
         onAddProvider={onAddProvider}
         onEditProvider={onEditProvider}
         onContinueSession={onContinueSession}
+        initialTab={initialTab}
+        returnLabel={returnLabel}
       />
     </div>
   )

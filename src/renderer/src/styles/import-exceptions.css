@@ -1,0 +1,11 @@
+.mz-exception{margin-top:10px}
+.mz-exception-source{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:var(--fs-t4);color:var(--text-2)}
+.mz-exception-source strong{color:var(--text-1);font-weight:500}
+.mz-exception-source p{flex-basis:100%;margin:4px 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;color:var(--text-3);max-height:110px;overflow-y:auto}
+.mz-exception-preserved{display:flex;gap:6px 12px;flex-wrap:wrap;margin:12px 0;padding:10px 0;border-bottom:1px solid var(--line);font-size:var(--fs-t5);color:var(--text-2)}
+.mz-exception-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.mz-exception-field{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-t5);color:var(--text-3);min-width:0}
+.mz-exception-field .mz-input,.mz-exception-field .mz-select{width:100%;max-width:none;min-width:0;height:36px;background:var(--bg-2)}
+.mz-exception-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px}
+.mz-exception-footer>span{font-size:var(--fs-t5);color:var(--text-3);flex:1;min-width:160px}
+.mz-exception-error{margin:10px 0;color:var(--danger);font-size:var(--fs-t5);overflow-wrap:anywhere}

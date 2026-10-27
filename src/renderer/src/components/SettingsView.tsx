@@ -18,6 +18,8 @@ interface Props {
   onEditProvider: (id: string) => void
   /** C4②：续接一条归档会话成功后回调（切回对话并刷新历史）。 */
   onContinueSession?: () => void
+  initialTab?: 'model' | 'billing' | 'storage'
+  returnLabel?: string
 }
 
 function SnapshotList({ onRestored }: { onRestored: () => void }) {
@@ -54,7 +56,7 @@ function SnapshotList({ onRestored }: { onRestored: () => void }) {
   )
 }
 
-export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvider, onContinueSession }: Props) {
+export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvider, onContinueSession, initialTab = 'model', returnLabel = '返回收件箱' }: Props) {
   const [info, setInfo] = useState<SettingsInfoDTO | null>(null)
   const [budgetYuan, setBudgetYuan] = useState('')
   const [budgetSaved, setBudgetSaved] = useState(false)
@@ -65,7 +67,7 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
   const [busy, setBusy] = useState(false)
   // 第 7 单 段3：设置页分 3 个子分类（只归组，不删改任何 section 功能）；默认「模型服务」。
   const [rulesOpen, setRulesOpen] = useState(false)
-  const [tab, setTab] = useState<'model' | 'billing' | 'storage'>('model')
+  const [tab, setTab] = useState<'model' | 'billing' | 'storage'>(initialTab)
 
   function reloadInfo(): void {
     window.mz.getSettingsInfo().then((i) => {
@@ -95,7 +97,7 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
         <button onClick={() => setRulesOpen(true)} data-testid="settings-category-rules">分类习惯</button>
         <span className="grow" />
         <button className="primary" onClick={onDone}>
-          返回收件箱
+          {returnLabel}
         </button>
       </div>
 
@@ -257,6 +259,8 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
               本机快照：自动（超过 24h 启动时补一份，保留最近 7 份）——防误操作。
               <br />
               跨机口令包：手动导出整库，口令 + Argon2id + AES-256-GCM 加密。忘口令 = 不可恢复（无后门）。
+              <br />
+              数据库快照和口令包包含附件引用，不含原图文件；换机时请另备份 attachments 目录。
             </p>
             <p className="muted small">
               最近快照：{info?.lastSnapshot ? `${info.lastSnapshot.name}（${new Date(info.lastSnapshot.mtime).toLocaleString()}）` : '还没有'}
@@ -360,7 +364,7 @@ export function SettingsView({ state, reload, onDone, onAddProvider, onEditProvi
 
           <section className="card">
             <h3>附件</h3>
-            <p className="muted small">截图原图默认保留在 attachments/（当前 {info?.attachmentCount ?? 0} 个文件）。旧附件可安全清理——账目数据在数据库里。</p>
+            <p className="muted small">原图是保存在 attachments/ 的本地文件，未随账本数据库加密（当前 {info?.attachmentCount ?? 0} 个文件）。交易详情可添加或移除引用；下方只清理没有被任何账目或来源引用的旧图片，不会删除共享来源。</p>
             <div className="key-row">
               <input
                 type="number"

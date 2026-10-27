@@ -33,14 +33,38 @@ export interface SeedResult {
   settings: number
 }
 
+/** 利用既有改名审计识别已使用的默认名，不增 settings 键或猜历史库的 ID。 */
+function renamedNames(db: Database, entity: 'account' | 'category'): Set<string> {
+  const table = entity === 'account' ? 'accounts' : 'categories'
+  const kindColumn = entity === 'account' ? 'type' : 'kind'
+  const rows = db.prepare(
+    `SELECT a.before_value,a.after_value,e.${kindColumn} AS kind FROM audit_log a JOIN ${table} e ON e.id=a.entity_id` +
+    " WHERE a.entity_type=? AND a.change_type='update'",
+  ).all(entity) as { before_value: string | null; after_value: string | null; kind: string }[]
+  const names = new Set<string>()
+  for (const row of rows) {
+    try {
+      const before = JSON.parse(row.before_value ?? 'null')
+      const after = JSON.parse(row.after_value ?? 'null')
+      if (typeof before?.name === 'string' && typeof after?.name === 'string' && before.name !== after.name) {
+        names.add(JSON.stringify([before.name, row.kind]))
+      }
+    } catch { /* 坏历史 JSON 不应阻断 seed；仅采信可识别的改名证据。 */ }
+  }
+  return names
+}
+
 export function seed(db: Database): SeedResult {
   const ts = nowIso()
   const added: SeedResult = { accounts: 0, categories: 0, settings: 0 }
+  const renamedAccounts = renamedNames(db, 'account')
+  const renamedCategories = renamedNames(db, 'category')
 
   const insAcc = db.prepare(
     "INSERT OR IGNORE INTO accounts (name, type, currency, created_at, updated_at) VALUES (?, ?, 'CNY', ?, ?)",
   )
   for (const [name, type] of ACCOUNTS) {
+    if (renamedAccounts.has(JSON.stringify([name, type]))) continue
     added.accounts += insAcc.run(name, type, ts, ts).changes
   }
 
@@ -48,6 +72,7 @@ export function seed(db: Database): SeedResult {
     'INSERT OR IGNORE INTO categories (name, kind, parent_id, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)',
   )
   for (const [name, kind] of CATEGORIES) {
+    if (renamedCategories.has(JSON.stringify([name, kind]))) continue
     added.categories += insCat.run(name, kind, ts, ts).changes
   }
 

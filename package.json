@@ -20,7 +20,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win nsis zip",
+    "dist": "electron-vite build && node scripts/package-runtime-deps.mjs && node scripts/check-package-runtime.mjs .scratch/package-app && electron-builder --win nsis zip",
     "ui-test": "electron-vite build && playwright test"
   },
   "dependencies": {
@@ -49,6 +49,7 @@
     "appId": "dev.mingzhang.pi",
     "productName": "mingzhang",
     "directories": {
+      "app": ".scratch/package-app",
       "output": "release"
     },
     "files": [

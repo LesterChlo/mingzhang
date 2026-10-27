@@ -2,6 +2,7 @@
 //
 // 日期与收支类型：独立版本化 dateType 操作，显式保存并保留原本地时间/时区。
 // 其余既有单字段编辑沿用 set；多附件在本机管理，不调用模型，不删除共享原图。
+// 拆账与不计收支由 TransactionActions 提供版本校验、确认与撤销入口。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
@@ -10,12 +11,7 @@ import { useInbox } from '../shell/inboxStore'
 import { STATE_LABELS, humanError, money, stateTone } from '../lib/ledgerFilter'
 import {TransactionAttachments} from './TransactionAttachments'
 import { TransactionDateTypeEditor } from './TransactionDateTypeEditor'
-
-/** 后端不支持的字段——原因逐条写清，禁用态可见（不做假按钮）。 */
-const BACKEND_GAPS: { id: string; label: string; reason: string }[] = [
-  { id: 'split', label: '拆账', reason: '拆账需要新的域层通道（规格 §6 未提供），本单不改后端' },
-  { id: 'adjust', label: '标记不计收支', reason: '标记不计收支（adjustment）无写入通道，本单不改后端' },
-]
+import { TransactionActions } from './TransactionActions'
 
 export function LedgerDetail({
   txId,
@@ -364,31 +360,7 @@ export function LedgerDetail({
         规格 §3.2 的「送入收件箱待确认」路径待后端（AI 发起的删除仍走确认门：收件箱可见删除确认卡）。
       </div>
 
-      {/* 待后端禁用区：四个字段/动作，原因逐条可见 */}
-      <div className="mz-todo-list" data-testid="ledger-backend-todo">
-        <div className="mz-panel-title">待后端（后端无通道，按钮禁用）</div>
-        <div className="mz-actions">
-          {BACKEND_GAPS.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              className="mz-btn mz-btn-ghost"
-              disabled
-              title={g.reason}
-              data-testid={`ledger-todo-${g.id}`}
-            >
-              {g.label}
-            </button>
-          ))}
-        </div>
-        <ul className="mz-todo-reasons">
-          {BACKEND_GAPS.map((g) => (
-            <li key={g.id}>
-              <b>{g.label}</b>：{g.reason}
-            </li>
-          ))}
-        </ul>
-      </div>
+      <TransactionActions txId={txId} onChanged={() => { void load(); onChanged() }} onNotice={onNotice} />
 
       {/* 审计：真实读取的记录（信任机制） */}
       {detail.audit.length > 0 && (

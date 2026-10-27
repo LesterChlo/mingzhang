@@ -37,6 +37,7 @@ import { buildCard, txOf } from '../domain/cards'
 import { findOpenByTxAndField, closePending } from '../domain/pending'
 import { applyTransactionDateTypeEdit } from '../domain/transaction-date-type'
 import { executeDeleteGate, cancelGate as cancelGateInDb } from '../domain/gates'
+import { executeTransactionSplit } from '../domain/transaction-actions'
 import { executeBatch, batchFollowUpSummary } from '../domain/batch'
 import { applyClassify } from '../domain/classify'
 import { getPending } from '../domain/pending'
@@ -44,7 +45,7 @@ import { startupReportCheck, type MonthReport } from '../domain/reports'
 import { nowIso } from '../db/time'
 import { startMockServer, type MockServer } from '../mock/server'
 import { join as joinPath } from 'node:path'
-import type { ChatEvent, ExecResult, TransactionCardData, TxEditOp } from '../../shared/types'
+import type { ChatEvent, ExecResult, SplitCardData, TransactionCardData, TransactionSplitResultDTO, TxEditOp } from '../../shared/types'
 
 export type Broadcaster = (evt: ChatEvent) => void
 
@@ -663,12 +664,12 @@ export class Engine {
   }
 
   /** 删除/批次确认门执行（仅 UI 按钮调用）。返回语义化 ExecResult。 */
-  async confirmGate(gateId: number): Promise<ExecResult> {
+  async confirmGate(gateId: number, expectedVersion?: string): Promise<ExecResult> {
     const key = `gate:${gateId}`
     if (this.confirming.has(key)) return { status: 'in_flight', message: '这道确认正在处理，请稍候…' }
     this.confirming.add(key)
     try {
-      return await this.doConfirmGate(gateId)
+      return await this.doConfirmGate(gateId, expectedVersion)
     } catch (e) {
       return { status: 'error', message: `执行失败：${(e as Error).message}` }
     } finally {
@@ -676,9 +677,26 @@ export class Engine {
     }
   }
 
-  private async doConfirmGate(gateId: number): Promise<ExecResult> {
+  private async doConfirmGate(gateId: number, expectedVersion?: string): Promise<ExecResult> {
     const gateRow = getPending(this.db, gateId)
     if (!gateRow) return { status: 'not_found', message: `确认门 #${gateId} 不存在` }
+    if (gateRow.field === 'split_confirm') {
+      if (gateRow.status !== 'open') return { status: 'already_closed', message: '这道拆账确认门已处理过，无需重复。' }
+      if (typeof expectedVersion !== 'string' || !expectedVersion) return { status: 'error', message: '缺少拆账预览版本，请刷新后重新确认。' }
+      const result: TransactionSplitResultDTO = executeTransactionSplit(this.db, { gateId, expectedVersion }, { via: 'panel' })
+      const card: SplitCardData = {
+        kind: 'split',
+        originalId: result.originalId,
+        cards: result.childIds.map((txId) => buildCard(this.db, txOf(this.db, txId))),
+      }
+      this.broadcast({ type: 'gate-executed', payload: { kind: 'split', gateId, result, card } })
+      try {
+        await this.session?.followUp(`系统通知：用户已在界面确认拆账，原交易 #${result.originalId} 已由 ${result.childIds.length} 个子项替代。请用一句话知会用户。`)
+      } catch {
+        // 事实已由事务提交；模型知会失败不回滚用户操作。
+      }
+      return { status: 'ok', message: `已拆账 #${result.originalId}，生成 ${result.childIds.map((id) => `#${id}`).join('、')}` }
+    }
     if (gateRow.field === 'batch_confirm') {
       const result = executeBatch(this.db, gateId)
       if (!result) return { status: 'already_closed', message: '这道批次确认门已处理过（已入账或已取消），无需重复。' }
@@ -747,7 +765,12 @@ export class Engine {
     if (this.confirming.has(key)) return { status: 'in_flight', message: '这笔正在处理，请稍候…' }
     this.confirming.add(key)
     try {
-      return this.doEditTx(txId, op)
+      const committedEvents: ChatEvent[] = []
+      let result!: ExecResult
+      this.db.transaction(() => { result = this.doEditTx(txId, op, committedEvents) })()
+      // Publish only after the whole edit (including category/pending side effects) commits.
+      for (const event of committedEvents) this.broadcast(event)
+      return result
     } catch (e) {
       return { status: 'error', message: `操作失败：${(e as Error).message}` }
     } finally {
@@ -755,7 +778,7 @@ export class Engine {
     }
   }
 
-  private doEditTx(txId: number, op: TxEditOp): ExecResult {
+  private doEditTx(txId: number, op: TxEditOp, committedEvents: ChatEvent[]): ExecResult {
     const tx = getTransaction(this.db, txId)
     if (!tx) return { status: 'not_found', message: `交易 #${txId} 不存在` }
 
@@ -776,14 +799,14 @@ export class Engine {
       softDelete(this.db, txId, { reasoning: '用户在账本详情里删除' })
       const review = findOpenByTxAndField(this.db, txId, 'confirm_record')
       if (review) closePending(this.db, review.id, 'cancelled')
-      this.broadcast({ type: 'tx-deleted', payload: { txId } })
+      committedEvents.push({ type: 'tx-deleted', payload: { txId } })
       return { status: 'ok', message: `已删除 #${txId}，可随时恢复` }
     }
 
     if (op.op === 'restore') {
       if (tx.state !== 'deleted') return { status: 'already_closed', message: '这笔未处于删除状态' }
       restore(this.db, txId, { reasoning: '用户在账本详情里恢复' })
-      this.broadcast({ type: 'tx-restored', payload: { txId } })
+      committedEvents.push({ type: 'tx-restored', payload: { txId } })
       return { status: 'ok', message: `已恢复 #${txId}` }
     }
 
@@ -801,7 +824,7 @@ export class Engine {
       updateFields(this.db, txId, fields, { changedBy: 'user', reasoning: '用户在账本详情补转账账户' })
       if (tx.state !== 'confirmed') confirmTx(this.db, txId, { reasoning: '用户补齐转入账户后确认' })
       const card = buildCard(this.db, txOf(this.db, txId))
-      this.broadcast({ type: 'record-confirmed', payload: { card } })
+      committedEvents.push({ type: 'record-confirmed', payload: { card } })
       return { status: 'ok', message: `转账账户已补齐，入账 #${txId}`, card }
     }
 

@@ -21,7 +21,7 @@ const row: BatchExcludedRowDTO = {
 function input(excludedRows: unknown = [row]) {
   return {
     sourceType: 'csv' as const, sessionId: 'synthetic-validation', billTableId: 41, rowsConsidered: 2, skippedCount: 1,
-    items: [{ amount_cents: 100, category_name: '其他', row_no: 1 }],
+    items: [{ tx_type: 'expense' as const, occurred_at: '2026-04-01T09:17:00+08:00', account_name: '现金', amount_cents: 100, category_name: '其他', row_no: 1 }],
     excludedRows: excludedRows as BatchExcludedRowDTO[],
   }
 }

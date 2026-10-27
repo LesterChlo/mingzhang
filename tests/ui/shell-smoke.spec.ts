@@ -746,7 +746,7 @@ test.describe('账本（真实数据）', () => {
     await page.getByTestId('ledger-clear-all').click()
   })
 
-  test('账本⑤ 日期/类型有真实编辑入口，其余缺口保持诚实禁用', async () => {
+  test('账本⑤ 日期/类型、拆账与不计收支均为真实入口，打开详情只读', async () => {
     // ④ 已经选中了这行，而行点击是**开关式**（再点一次取消选中），所以这里只在
     // 详情栏没开时才点——否则会把刚开的面板又关掉。
     if ((await page.getByTestId('ledger-detail').count()) === 0) {
@@ -757,13 +757,23 @@ test.describe('账本（真实数据）', () => {
     await expect(page.getByTestId('ledger-edit-direction')).toBeEnabled()
     await expect(page.getByTestId('ledger-todo-date')).toHaveCount(0)
     await expect(page.getByTestId('ledger-todo-type')).toHaveCount(0)
-    const todo = page.getByTestId('ledger-backend-todo')
-    await expect(todo).toBeVisible()
-    for (const id of ['split', 'adjust']) {
-      await expect(page.getByTestId(`ledger-todo-${id}`)).toBeDisabled()
+    // 日期/类型与拆账/不计收支均已接通，旧禁用占位不应再出现。
+    await expect(page.getByTestId('ledger-backend-todo')).toHaveCount(0)
+    for (const id of ['date', 'type', 'split', 'adjust']) {
+      await expect(page.getByTestId(`ledger-todo-${id}`)).toHaveCount(0)
     }
-    // 剩余缺口仍逐条说明；日期/类型已由本单的真实通道接走。
-    await expect(todo).toContainText('待后端')
+    await expect(page.getByTestId('ledger-actions')).toHaveAttribute('aria-busy', 'false')
+    const before = await page.evaluate(() => window.mz.listLedger({}))
+    const history = await page.evaluate(() => window.mz.loadHistory())
+    await expect(page.getByTestId('ledger-split-open')).toBeEnabled()
+    await expect(page.getByTestId('ledger-exclude-toggle')).toBeEnabled()
+    await expect(page.getByTestId('ledger-todo-split')).toHaveCount(0)
+    await expect(page.getByTestId('ledger-todo-adjust')).toHaveCount(0)
+    expect(await page.evaluate(() => window.mz.listLedger({}))).toEqual(before)
+    const afterHistory = await page.evaluate(() => window.mz.loadHistory())
+    expect(afterHistory.filter(m => m.role === 'user').length).toBe(history.filter(m => m.role === 'user').length)
+    // 已合入稳定历史 ID：打开详情连 ID 在内都不得改写历史。
+    expect(afterHistory).toEqual(history)
   })
 
   test('账本⑥ 删除 → 实测口径：直接软删，收件箱**不**出现删除确认卡', async () => {

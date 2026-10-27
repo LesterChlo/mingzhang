@@ -7,7 +7,8 @@ import { softDelete, snapshot, getTransaction, type TxSnapshot } from './ledger'
 import { createPending, getPending, closePending, listOpen, findOpenByTxAndField, type PendingRow } from './pending'
 import { buildClassifyCard } from './classify'
 import { buildCard } from './cards'
-import type { BatchGateCardData, CardData, DeleteGateCardData } from '../../shared/types'
+import { getTransactionSplitPlan } from './transaction-actions'
+import type { BatchGateCardData, CardData, DeleteGateCardData, SplitGateCardData } from '../../shared/types'
 
 export interface GateInfo {
   gate: PendingRow
@@ -61,6 +62,11 @@ export function buildOpenGateCards(db: Database): { gateId: number; field: strin
       const tx = getTransaction(db, gate.tx_id ?? -1)
       if (!tx) continue
       const card: DeleteGateCardData = { kind: 'delete-gate', gateId: gate.id, tx: buildCard(db, tx).tx }
+      out.push({ gateId: gate.id, field: gate.field, card })
+    } else if (gate.field === 'split_confirm') {
+      const plan = getTransactionSplitPlan(db, gate.id)
+      if (!plan) continue
+      const card: SplitGateCardData = { kind: 'split-gate', plan }
       out.push({ gateId: gate.id, field: gate.field, card })
     } else if (gate.field === 'batch_confirm') {
       try {

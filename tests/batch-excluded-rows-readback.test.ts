@@ -67,7 +67,7 @@ describe('排除行结果读回语义', () => {
         ['2026-04-02', '合成规则排除', '2.00', '排除'],
       ] })
       const result = applyBillPlan(db, {
-        table_id: table.id, columns: { time: '时间', merchant: '商户', amount: '金额' },
+        table_id: table.id, columns: { time: '时间', merchant: '商户', amount: '金额' }, default_type: 'expense', account_name: '现金',
         skip_when: [{ column: '状态', contains: '排除' }],
       }, { sessionId: 'synthetic-readonly-rules' })
       executeBatch(db, result.gateId!)

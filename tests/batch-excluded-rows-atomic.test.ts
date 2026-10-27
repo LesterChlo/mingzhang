@@ -83,7 +83,7 @@ describe('排除行原子性与重试', () => {
   it.each(modes)('execute关门失败回滚交易与import，保持open且无结果，重试只执行一次：%s', (mode) => {
     const db = fixture()
     try {
-      const items = mode === 'mixed' ? [{ amount_cents: 100, merchant: '合成执行', category_name: '其他' }] : []
+      const items = mode === 'mixed' ? [{ tx_type: 'expense' as const, occurred_at: '2026-04-01T09:17:00+08:00', account_name: '现金', amount_cents: 100, merchant: '合成执行', category_name: '其他' }] : []
       const prepared = prepareBatch(db, { sourceType: 'csv', sessionId: 'synthetic-execute', items, skippedCount: 1, excludedRows: [excluded] })
       db.exec("CREATE TEMP TRIGGER fail_close BEFORE UPDATE OF status ON pending_clarifications WHEN NEW.field='batch_confirm' AND NEW.status='resolved' BEGIN SELECT RAISE(ABORT, 'synthetic-close-failure'); END")
       const before = facts(db)

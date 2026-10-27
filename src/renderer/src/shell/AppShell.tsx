@@ -143,7 +143,6 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
               initialTab={settingsInitialTab}
               state={state}
               reload={reload}
-              initialTab={settingsInitialTab}
               returnLabel={settingsReturnView === 'accounts' ? '返回账户' : '返回收件箱'}
               onDone={() => setView(settingsReturnView)}
               onAddProvider={onAddProvider}

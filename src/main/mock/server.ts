@@ -149,7 +149,7 @@ function notificationReply(text: string): string {
   const failure = /^系统通知：((?:批次执行|批次|批量归类|归类|删除|入账|执行|操作)?)(失败|未完成)(?:，(账目未改变|账目未变))?。/.exec(text)
   if (failure) return `${failure[1] || '操作'}${failure[2]}${failure[3] ? `，${failure[3]}` : ''}。`
   // batchFollowUpSummary 的结果在第二句，转账结果还在后段；不靠截第一句净化。
-  const result = /^系统通知：用户已在界面确认批次入账。已完成 (\d+) 笔（其中 (\d+) 笔缺分类转待确认），重复跳过 (\d+) 笔，缺金额待核对 (\d+) 笔(?:；(\d+) 笔转账因缺转入\/转出账户未入账（([\s\S]*)）(?=。请主动逐笔追问用户这笔转账的「转出账户」和「转入账户」))?。/.exec(text)
+  const result = /^系统通知：用户已在界面确认批次入账。已完成 (\d+) 笔（其中 (\d+) 笔缺分类转待确认），重复跳过 (\d+) 笔，缺金额待核对 (\d+) 笔(?:；(\d+) 笔转账因缺转入\/转出账户未入账（([\s\S]*)）(?=。(?:请主动逐笔追问用户这笔转账的「转出账户」和「转入账户」|请引导用户在这笔原待办里补齐「转出账户」和「转入账户」，保留原金额，提交后继续补记原行；不要另记一笔或忽略原待办，不要臆造账户。)))?。/.exec(text)
   if (result) {
     if (!result.slice(1, 5).every((value) => validCount(value)) || Number(result[2]) > Number(result[1]) || (result[5] !== undefined && !validCount(result[5], 1))) return unknown
     let reply = `批次已处理：已完成 ${result[1]} 笔（其中 ${result[2]} 笔缺分类转待确认），重复跳过 ${result[3]} 笔，缺金额待核对 ${result[4]} 笔。`

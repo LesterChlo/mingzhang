@@ -6,6 +6,7 @@ import type { BatchGateCardData, DeleteGateCardData, PendingItemDTO } from '../.
 import { useInbox } from '../shell/inboxStore'
 import { money, relTime, txTypeLabel } from '../lib/shellFormat'
 import {ImportExceptionForm} from './ImportExceptionForm'
+import { SplitPlanCard } from './SplitPlanCard'
 
 type Tone = 'green' | 'yellow' | 'blue' | 'red' | 'gray'
 
@@ -51,7 +52,7 @@ function askLine(question: string): string {
 }
 
 export function QueueCard({ item }: { item: PendingItemDTO }): ReactElement {
-  const { gateCards, details, busy, runExec, refresh } = useInbox()
+  const { gateCards, details, busy, runExec, refresh, notify } = useInbox()
   const [showBatchItems, setShowBatchItems] = useState(false)
   const meta = item.field==='batch_item' ? {tone:'yellow' as const,label:'待核对 · 导入异常',tag:null} : metaOf(item.field)
   const gate = gateCards.find((g) => g.gateId === item.gateId)
@@ -61,6 +62,14 @@ export function QueueCard({ item }: { item: PendingItemDTO }): ReactElement {
   const gateId = item.gateId
   // C 单：依据长文本折叠成一行，title 兜底给全文（悬停也会展开，见 .mz-basis:hover）
   const basis = basisOf(item, detail?.tx.note)
+
+  if (card?.kind === 'split-gate') return (
+    <article className="mz-card" data-testid="inbox-card" data-kind={item.field} data-gate={gateId}>
+      <div className="mz-card-head"><span className="mz-dot mz-dot-blue" /><span className="mz-card-kind">拆账确认</span><time>{relTime(item.createdAt)}</time></div>
+      <SplitPlanCard plan={card.plan} onDone={result => notify({ text: result.message, tone: 'ok' })} />
+      <div className="mz-basis" data-testid="inbox-basis">依据：账本原笔与已保存的拆账方案；确认前不修改交易。</div>
+    </article>
+  )
 
   const primary = (): ReactElement | null => {
     if (item.field === 'confirm_record' && detail) {

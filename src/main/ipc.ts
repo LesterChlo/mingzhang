@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { convertToPng } from '@earendil-works/pi-coding-agent'
 import { imageMagicMatches } from './attachment-files'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import type { AppConfigDTO, LedgerFilter, ThemeName, TxEditOp } from '../shared/types'
+import type { AppConfigDTO, LedgerFilter, ThemeName, TransactionSplitItemInput, TxEditOp } from '../shared/types'
 import { normalizeTheme, type ConfigStore, type AppConfig } from './config/store'
 import { getTransactionEditForm } from './domain/transaction-date-type'
 import type { SecretsStore } from './secrets/store'
@@ -20,6 +20,7 @@ import type { ResolveImportExceptionInput } from '../shared/types'
 import { firstAttachmentRef } from './domain/pending'
 import { getTransactionAttachments, addTransactionAttachments, removeTransactionAttachment, primaryTransactionAttachmentRef, validateAttachmentTxId, validateAddTransactionAttachmentsInput } from './domain/transaction-attachments'
 import type { AddTxAttachmentsInput, RemoveTxAttachmentInput } from '../shared/types'
+import { getTransactionActions, getTransactionSplitPlan, prepareTransactionSplit, setTransactionExcluded, undoTransactionSplit } from './domain/transaction-actions'
 import { previousMonth } from './domain/queries'
 import {
   emptyLedgerAgg,
@@ -218,7 +219,7 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     },
   )
 
-  ipcMain.handle('mz:confirmGate', (_e, gateId: number) => ctx.engines.get().confirmGate(gateId))
+  ipcMain.handle('mz:confirmGate', (_e, gateId: number, expectedVersion?: string) => ctx.engines.get().confirmGate(gateId, expectedVersion))
   ipcMain.handle('mz:cancelGate', (_e, gateId: number) => ctx.engines.get().cancelGate(gateId))
   ipcMain.handle('mz:editTx', (_e, txId: number, op: TxEditOp) => ctx.engines.get().editTx(txId, op))
   ipcMain.handle('mz:getTransactionEditForm', (_e, txId: number) => {
@@ -470,6 +471,20 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
   ipcMain.handle('mz:getBatchPresentation', (_e, gateId: number) => getBatchPresentation(requireDb(), gateId))
   ipcMain.handle('mz:setBatchPresentation', (_e, gateId: number, patch: Partial<BatchPresentationDTO>) => setBatchPresentation(requireDb(), gateId, patch))
 
+  ipcMain.handle('mz:getTransactionActions', (_e, txId: number) => getTransactionActions(requireDb(), txId))
+  ipcMain.handle('mz:getTransactionSplitPlan', (_e, gateId: number) => getTransactionSplitPlan(requireDb(), gateId))
+  ipcMain.handle('mz:prepareTransactionSplit', (_e, input: { txId: number; expectedVersion: string; items: TransactionSplitItemInput[] }) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.expectedVersion !== 'string' || !input.expectedVersion || !Array.isArray(input.items)) {
+      throw new Error('拆账方案参数无效，请重新读取交易后重试')
+    }
+    return prepareTransactionSplit(requireDb(), input, { via: 'panel', sessionId: 'ui-transaction-actions' })
+  })
+  ipcMain.handle('mz:undoTransactionSplit', (_e, input: { gateId: number; expectedVersion: string }) =>
+    undoTransactionSplit(requireDb(), input, { via: 'panel' }),
+  )
+  ipcMain.handle('mz:setTransactionExcluded', (_e, input: { txId: number; expectedVersion: string; excluded: boolean }) =>
+    setTransactionExcluded(requireDb(), input, { via: 'panel' }),
+  )
   ipcMain.handle('mz:prepareClassify', (_e, input: { batchId?: string | null; assignments: ClassifyAssignmentInput[]; expectedProposalVersion?: string }) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('归类参数无效')
     if (typeof input.expectedProposalVersion !== 'string' || !input.expectedProposalVersion) throw new Error('归类建议版本缺失，请重新读取并复核')

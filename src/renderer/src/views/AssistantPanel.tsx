@@ -19,6 +19,8 @@ import { money } from '../lib/shellFormat'
 import { renderMarkdown } from '../lib/markdown'
 import { THINK_TEXT_CAP } from '../lib/thinking'
 import { toolLabel, usePanel } from '../shell/panelStore'
+import { useInbox } from '../shell/inboxStore'
+import { SplitPlanCard } from './SplitPlanCard'
 import type { PanelItem } from '../shell/panelStore'
 import './panel-history.css'
 
@@ -27,6 +29,8 @@ const STICK_THRESHOLD_PX = 24
 
 export function AssistantPanel(): ReactElement {
   const { open, items, busy, historyLoading, historyError, reloadHistory, plans, planEdits, outcomes, setPlanValue, applyClassify, undoClassify, send } = usePanel()
+  const { gateCards, notify } = useInbox()
+  const splitPlans = gateCards.flatMap(g => g.card.kind === 'split-gate' ? [g.card.plan] : [])
   const [text, setText] = useState('')
 
   // A 单：新消息自动贴底 —— 用户在底部时才贴（往上翻过就不抢）；
@@ -92,6 +96,8 @@ export function AssistantPanel(): ReactElement {
         ) : (
           items.map((it) => <PanelRow key={it.id} item={it} />)
         )}
+
+        {splitPlans.length > 0 && <div data-testid="panel-split-plans">{splitPlans.map(p => <SplitPlanCard key={p.gateId} plan={p} onDone={result => notify({ text: result.message, tone: 'ok' })} />)}</div>}
 
         {/* 归类映射表：门卡是数据源，没有卡就是没有待分类——空态直说，不画一张空表 */}
         {!plan && (

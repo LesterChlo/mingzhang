@@ -15,7 +15,7 @@ const header = ['时间', '商户', '金额', '状态']
 function apply(db: ReturnType<typeof openSchemaDb>, cells: string[][]) {
   const table = stageBill(db, { sourceType: 'csv', cells: [header, ...cells], fileName: 'synthetic-restart.csv' })
   const result = applyBillPlan(db, {
-    table_id: table.id,
+    table_id: table.id, default_type: 'expense', account_name: '现金',
     columns: { time: '时间', merchant: '商户', amount: '金额' },
     skip_when: [{ column: '状态', contains: '排除' }],
     categories: [{ match: '合成', category_name: '其他' }],

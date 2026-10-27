@@ -138,7 +138,7 @@ it('损坏pending附件列表清理必须零删除，不能把非法refs过滤�
 })
 
 it('真实executeBatch在同期创建每笔交易保存所有plan来源，不依赖pending幸存', () => {
-  const f = fixture(), gate = prepareBatch(f.db, { sourceType: 'screenshot', sessionId: 'synthetic', attachments: ['one.png', 'two.png'], items: [{ amount_cents: 100, category_name: '餐饮' }, { amount_cents: 200, category_name: '餐饮' }] })
+  const f = fixture(), gate = prepareBatch(f.db, { sourceType: 'screenshot', sessionId: 'synthetic', attachments: ['one.png', 'two.png'], items: [{ tx_type: 'expense' as const, occurred_at: '2026-04-01T09:17:00+08:00', account_name: '现金', amount_cents: 100, category_name: '餐饮' }, { tx_type: 'expense' as const, occurred_at: '2026-04-01T09:17:00+08:00', account_name: '现金', amount_cents: 200, category_name: '餐饮' }] })
   const state = () => Object.fromEntries(['transactions','imports','audit_log','pending_clarifications','settings','accounts','categories','rules','sqlite_sequence'].map(table => [table, f.db.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all()]))
   const before = state()
   f.db.exec("CREATE TRIGGER synthetic_batch_source_fail BEFORE INSERT ON settings WHEN NEW.key LIKE 'source.attachments:%' BEGIN SELECT RAISE(ABORT,'SYNTHETIC-BATCH-SOURCE'); END")

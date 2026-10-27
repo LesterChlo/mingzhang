@@ -45,11 +45,14 @@ test('排除行：真实账单→方案→确认后全部明细可展开，查�
     await page.mouse.click(lastBox!.x + 20, lastBox!.y + lastBox!.height / 2)
     await expect(page.getByTestId('br-excluded-row').last().locator('details')).toHaveAttribute('open', '')
     expect(await page.evaluate(() => window.mz.listLedger({ limit: 100 }))).toEqual(before)
+    // PR40 persists expansion; wait for the actual IPC write before closing.
+    await expect.poll(() => page.evaluate(id => window.mz.getBatchPresentation(id).then(s => s.excludedOpen), gate.gateId)).toBe(true)
     await app.close()
     app = await launch()
     page = await app.firstWindow()
     await expect(page.getByTestId('br-excluded')).toContainText('12 不计收支')
-    await page.getByTestId('br-excluded-toggle').click()
+    // The saved open state must be restored, not toggled closed by the test.
+    await expect(page.getByTestId('br-excluded-toggle')).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('br-excluded-row')).toHaveCount(12)
     expect(await page.evaluate(() => window.mz.listLedger({ limit: 100 }))).toEqual(before)
     await page.getByTestId('theme-toggle').click()

@@ -114,7 +114,7 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
 
         <div className="mz-view" key={view}>
           {view === 'inbox' && (
-            <InboxView onGoReport={() => setView('report')} onOpenSettings={(tab) => { setSettingsInitialTab(tab); setView('settings') }} />
+            <InboxView onGoReport={() => setView('report')} onOpenSettings={(tab) => { setSettingsInitialTab(tab); setSettingsReturnView('inbox'); setView('settings') }} />
           )}
           {view === 'ledger' && <LedgerView initialFilter={ledgerInitialFilter} />}
           {view === 'report' && (

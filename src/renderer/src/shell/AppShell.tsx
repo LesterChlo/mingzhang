@@ -9,13 +9,14 @@ import { InboxProvider, useInbox } from './inboxStore'
 import { PanelProvider, usePanel } from './panelStore'
 import { AccountsView } from '../views/AccountsView'
 import { AssistantPanel } from '../views/AssistantPanel'
+import { BusinessView } from '../views/BusinessView'
 import { InboxView } from '../views/InboxView'
 import { LedgerView } from '../views/LedgerView'
 import { ReportView } from '../views/ReportView'
 import { SettingsRoute } from '../views/SettingsRoute'
 
-/** §1.1 导航树的五个落点。收件箱是唯一默认屏。 */
-export type AppShellView = 'inbox' | 'ledger' | 'report' | 'accounts' | 'settings'
+/** §1.1 导航树的六个落点。收件箱是唯一默认屏。 */
+export type AppShellView = 'inbox' | 'ledger' | 'report' | 'accounts' | 'business' | 'settings'
 
 /** 真实应用的主题由 <html data-theme> 驱动；与配置枚举同口径（dark / light），不再做映射。 */
 export type ShellTheme = ThemeName
@@ -138,6 +139,7 @@ function ShellBody({ state, reload, onAddProvider, onEditProvider, onContinueSes
               setView('settings')
             }}
           />}
+          {view === 'business' && <BusinessView />}
           {view === 'settings' && (
             <SettingsRoute
               initialTab={settingsInitialTab}

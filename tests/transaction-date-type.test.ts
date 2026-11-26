@@ -3,14 +3,14 @@ import {mkdtempSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import type {Database} from 'better-sqlite3-multiple-ciphers'
-import {openSchemaDb} from './helpers'
+import {openSchemaDb,seedCustomCategories} from './helpers'
 import {seed} from '../src/main/db/seed'
 import {createTransaction,recordParse,confirm as confirmTx,getTransaction,updateFields,softDelete} from '../src/main/domain/ledger'
 let db:Database,txId:number,expense:number,income:number
 const full=()=>Object.fromEntries((db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {name:string}[]).map(({name})=>[name,db.prepare(`SELECT * FROM "${name.replaceAll('"','""')}" ORDER BY rowid`).all()]))
 const api=()=>import('../src/main/domain/transaction-date-type')
 beforeEach(()=>{
- db=openSchemaDb(join(mkdtempSync(join(tmpdir(),'mz-date-type-contract-')),'synthetic.db'));seed(db)
+ db=openSchemaDb(join(mkdtempSync(join(tmpdir(),'mz-date-type-contract-')),'synthetic.db'));seed(db);seedCustomCategories(db)
  expense=(db.prepare("SELECT id FROM categories WHERE kind='expense' AND name='餐饮'").get() as {id:number}).id
  income=(db.prepare("SELECT id FROM categories WHERE kind='income' AND name='生活费'").get() as {id:number}).id
  txId=createTransaction(db,{amountCents:8750,txType:'expense',accountId:2,occurredAt:'2026-10-31T23:59:59+08:00',merchant:'合成日期编辑',sourceMessageId:'synthetic-date-source',changedBy:'user'})

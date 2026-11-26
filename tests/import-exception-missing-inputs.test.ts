@@ -1,11 +1,11 @@
 // Parent R1 regressions: missing information never becomes today, cash or expense.
 import {it,expect} from 'vitest'
-import {openSchemaDb} from './helpers'
+import {openSchemaDb,seedCustomCategories} from './helpers'
 import {seed} from '../src/main/db/seed'
 import {prepareBatch,executeBatch} from '../src/main/domain/batch'
 import {describeImportException,resolveImportException} from '../src/main/domain/import-exceptions'
 const normal={amount_cents:4705,tx_type:'income' as const,occurred_at:'2026-09-30 12:34:56',account_name:'微信',category_name:'生活费',merchant:'合成R1原行',source_text:'合成工资结算',reliable_id:'synthetic-r1-id'}
-function fixture(){const db=openSchemaDb(':memory:');seed(db);return db}
+function fixture(){const db=openSchemaDb(':memory:');seed(db);seedCustomCategories(db);return db}
 function prepare(db:ReturnType<typeof fixture>,item:any){return prepareBatch(db,{sourceType:'csv',sessionId:'synthetic-r1',channel:'synthetic-r1',items:[item]})}
 function verifyPending(db:ReturnType<typeof fixture>,result:ReturnType<typeof executeBatch>,field:string){expect(db.prepare('SELECT COUNT(*) n FROM transactions').get()).toEqual({n:0});expect(result?.completed).toHaveLength(0);expect((result?.unparsedKept??0)+(result?.unmatchedAccounts??0)).toBe(1);expect(db.prepare('SELECT status FROM imports').get()).toEqual({status:'pending'});const rows=db.prepare("SELECT id,field FROM pending_clarifications WHERE status='open' AND field IN ('batch_item','transfer_account')").all() as {id:number,field:string}[];expect(rows).toHaveLength(1);const form=describeImportException(db,rows[0].id)!;expect(form).not.toBeNull();expect(form.missingFields).toContain(field);expect(form.source.sourceText).toBe(normal.source_text);return form}
 it('完整可信方向/发生时间/账户正控保持原值和可靠来源去重身份',()=>{const db=fixture();try{const p=prepare(db,normal),r=executeBatch(db,p.gateId);expect(r?.completed).toHaveLength(1);expect(db.prepare('SELECT type,occurred_at,amount_cents,state FROM transactions').get()).toEqual({type:'income',occurred_at:normal.occurred_at,amount_cents:4705,state:'confirmed'});expect(db.prepare("SELECT a.name n FROM transactions t JOIN accounts a ON a.id=t.account_id").get()).toEqual({n:'微信'})}finally{db.close()}})

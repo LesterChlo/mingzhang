@@ -431,6 +431,8 @@ export interface LedgerRow {
   type: string
   state: string
   merchant: string | null
+  /** 原表 note 列由 queryLedgerPage 一并读出（导出等场景用）。 */
+  note?: string | null
   categoryName: string | null
   accountName: string | null
   occurredAt: string
@@ -572,6 +574,9 @@ export interface SessionArchiveDTO {
   messageCount: number
   current: boolean
 }
+
+/** 账本导出的两种格式；主进程用 xlsx 写 xlsx、手写 CSV（带 BOM + 防公式注入）。 */
+export type LedgerExportFormat = 'csv' | 'xlsx'
 
 export interface LedgerFilter {
   month?: string // YYYY-MM
@@ -719,6 +724,365 @@ export interface ChatMessageDTO {
   images?: { previewUrl: string; fileName: string }[]
 }
 
+// === 第三阶段：商品经营 DTO（渲染层 ↔ 主进程 IPC） ===
+export interface ProductDTO {
+  id: number
+  name: string
+  brand: string
+  standard_price_cents: number
+  avg_cost_cents: number
+  stock_qty: number
+  stock_cost_cents: number
+  cumulative_purchase_qty: number
+  cumulative_purchase_cents: number
+  cumulative_sales_qty: number
+  cumulative_sales_cents: number
+  cumulative_sales_cost_cents: number
+  cumulative_refund_qty: number
+  cumulative_refund_cents: number
+  sales_order_count: number
+}
+
+/** 规格（独立核算单元）：每个商品下挂多个，各有售价/成本/库存。 */
+export interface VariantDTO {
+  id: number
+  product_id: number
+  spec_name: string
+  standard_price_cents: number
+  avg_cost_cents: number
+  stock_qty: number
+  stock_cost_cents: number
+  cumulative_purchase_qty: number
+  cumulative_purchase_cents: number
+  cumulative_sales_qty: number
+  cumulative_sales_cents: number
+  cumulative_sales_cost_cents: number
+  cumulative_refund_qty: number
+  cumulative_refund_cents: number
+  sales_order_count: number
+  sort_order: number
+  locked: number
+}
+
+export interface CalcFields {
+  net_sales_cents: number
+  gross_profit_cents: number
+  refund_amount_rate: number
+}
+
+export interface VariantProfileDTO extends VariantDTO, CalcFields {}
+
+export interface ProductWithVariantsDTO extends ProductDTO {
+  variants: VariantDTO[]
+}
+
+export interface ProductProfileDTO extends ProductDTO, CalcFields {
+  variants: VariantProfileDTO[]
+}
+
+export interface CreateVariantDTO {
+  product_id: number
+  spec_name: string
+  standard_price_cents?: number
+  sort_order?: number
+  /** 期初库存（≥0，可带小数）。 */
+  stock_qty?: number
+  /** 期初单件成本（分，≥0）。 */
+  avg_cost_cents?: number
+}
+
+export interface UpdateVariantDTO {
+  id: number
+  spec_name?: string
+  standard_price_cents?: number
+  sort_order?: number
+  /** 手工校准库存（≥0，可带小数）。不传 = 不改。 */
+  stock_qty?: number
+  /** 手工校准单件成本（分，≥0）。不传 = 不改。 */
+  avg_cost_cents?: number
+}
+
+export interface SaleInputDTO {
+  product_id: number
+  variant_id?: number | null
+  occurred_at: string
+  qty: number
+  unit_price_cents: number
+  channel: string
+  order_no?: string | null
+  note?: string | null
+}
+
+export interface SaleResultDTO {
+  orderId: number
+  variant_id: number
+  variant_name: string
+  amount_cents: number
+  cost_per_unit_cents: number
+  total_cost_cents: number
+  gross_profit_cents: number
+}
+
+export interface PurchaseInputDTO {
+  product_id: number
+  variant_id?: number | null
+  occurred_at: string
+  qty: number
+  total_cents: number
+  channel: string
+  note?: string | null
+}
+
+export interface PurchaseResultDTO {
+  purchaseId: number
+  variant_id: number
+  variant_name: string
+  unit_cost_cents: number
+  prev_avg_cost_cents: number
+  prev_stock_qty: number
+  new_avg_cost_cents: number
+}
+
+export interface RefundInputDTO {
+  sales_order_id?: number | null
+  product_id: number
+  variant_id?: number | null
+  occurred_at: string
+  refund_cents: number
+  refund_qty?: number
+  channel: string
+  reason?: string | null
+  restore_stock?: boolean
+  note?: string | null
+}
+
+export interface RefundResultDTO {
+  refundId: number
+  linked: boolean
+  variant_id: number
+  variant_name: string
+  original_channel?: string | null
+}
+
+// === 第五阶段：经营概览 + 实时盈亏测算 ===
+export interface ProductProfitDTO {
+  product_id: number
+  product_name: string
+  brand: string
+  sales_cents: number
+  refund_cents: number
+  net_sales_cents: number
+  cost_cents: number
+  gross_profit_cents: number
+  gross_margin: number
+  sales_qty: number
+  refund_qty: number
+  order_count: number
+}
+
+export interface ChannelProfitDTO {
+  channel: string
+  kind: 'income' | 'expense'
+  amount_cents: number
+  count: number
+}
+
+export interface OverviewRangeDTO {
+  from?: string | null
+  to?: string | null
+}
+
+export interface TodayOverviewDTO {
+  sales_cents: number
+  refund_cents: number
+  net_sales_cents: number
+  cost_cents: number
+  gross_profit_cents: number
+  expense_cents: number
+  net_profit_cents: number
+  order_count: number
+}
+
+export interface BusinessOverviewDTO {
+  sales_cents: number
+  refund_cents: number
+  net_sales_cents: number
+  cost_cents: number
+  gross_profit_cents: number
+  gross_margin: number
+  sales_qty: number
+  order_count: number
+  cs_income_cents: number
+  other_income_cents: number
+  expense_cents: number
+  other_expense_cents: number
+  net_profit_cents: number
+  net_margin: number
+  stock_qty: number
+  stock_cost_cents: number
+  products: ProductProfitDTO[]
+  channels: ChannelProfitDTO[]
+  today: TodayOverviewDTO
+}
+
+export interface ProfitCalcInputDTO {
+  product_id: number
+  variant_id?: number | null
+  qty: number
+  unit_price_cents?: number | null
+  extra_expense_cents?: number | null
+}
+
+export interface ProfitCalcResultDTO {
+  variant_id: number
+  variant_name: string
+  qty: number
+  unit_price_cents: number
+  cost_per_unit_cents: number
+  amount_cents: number
+  total_cost_cents: number
+  gross_profit_cents: number
+  gross_margin: number
+  net_profit_cents: number
+  net_margin: number
+  break_even_price_cents: number
+  suggested_price_cents: number
+}
+
+// === 第六阶段：月度经营报表 + 趋势 ===
+export interface DailyPointDTO {
+  date: string
+  sales_cents: number
+  refund_cents: number
+  net_sales_cents: number
+  cost_cents: number
+  gross_profit_cents: number
+  order_count: number
+}
+
+export interface ProductRankDTO {
+  product_id: number
+  product_name: string
+  brand: string
+  net_sales_cents: number
+  gross_profit_cents: number
+  sales_qty: number
+  order_count: number
+}
+
+export interface ShareItemDTO {
+  label: string
+  amount_cents: number
+  ratio: number
+  count: number
+}
+
+export interface MonthlyReportDTO {
+  month: string
+  sales_cents: number
+  refund_cents: number
+  net_sales_cents: number
+  cost_cents: number
+  gross_profit_cents: number
+  gross_margin: number
+  order_count: number
+  sales_qty: number
+  cs_income_cents: number
+  other_income_cents: number
+  expense_cents: number
+  other_expense_cents: number
+  net_profit_cents: number
+  net_margin: number
+  daily: DailyPointDTO[]
+  product_rank: ProductRankDTO[]
+  income_channels: ShareItemDTO[]
+  expense_categories: ShareItemDTO[]
+}
+
+export interface TrendPointDTO {
+  month: string
+  net_sales_cents: number
+  gross_profit_cents: number
+  net_profit_cents: number
+  order_count: number
+}
+
+// === 第七阶段：备份管理 ===
+export interface SnapshotDTO {
+  name: string
+  size: number
+  mtime: number
+}
+
+// === 第八阶段：快捷记账模板 ===
+export type TemplateKindDTO = 'sale' | 'purchase' | 'expense' | 'refund' | 'cs_income' | 'other'
+
+export interface QuickTemplateDTO {
+  id: number
+  name: string
+  kind: TemplateKindDTO
+  product_id: number | null
+  variant_id: number | null
+  channel: string | null
+  default_qty: number | null
+  default_price_cents: number | null
+  note: string | null
+  use_count: number
+  product_name: string | null
+  brand: string | null
+  variant_name: string | null
+}
+
+export interface CreateTemplateDTO {
+  name: string
+  kind: TemplateKindDTO
+  product_id?: number | null
+  variant_id?: number | null
+  channel?: string | null
+  default_qty?: number | null
+  default_price_cents?: number | null
+  note?: string | null
+}
+
+export interface UpdateTemplateDTO {
+  id: number
+  name?: string
+  channel?: string | null
+  default_qty?: number | null
+  default_price_cents?: number | null
+  note?: string | null
+  product_id?: number | null
+  variant_id?: number | null
+}
+
+export interface CSIncomeInputDTO {
+  occurred_at: string
+  amount_cents: number
+  channel: string
+  description?: string | null
+  note?: string | null
+}
+
+export interface OtherInputDTO {
+  kind: 'income' | 'expense'
+  occurred_at: string
+  amount_cents: number
+  channel: string
+  item_name: string
+  note?: string | null
+}
+
+export interface ExpenseInputDTO {
+  occurred_at: string
+  amount_cents: number
+  channel: string
+  category: string
+  product_id?: number | null
+  purchase_id?: number | null
+  purpose?: string | null
+  note?: string | null
+}
+
 // preload 暴露给渲染层的 API 面
 export interface MingZhangApi {
   getState: () => Promise<AppConfigDTO>
@@ -796,6 +1160,8 @@ export interface MingZhangApi {
   /** 新开对话：有内容则归档并新开会话（返回 true）；当前已是空会话则不强制归档（返回 false）。 */
   newConversation: () => Promise<boolean>
   exportBackup: (passphrase: string) => Promise<string | null>
+  /** 按当前账本筛选导出流水；格式由主进程决定写入内容，路径只由保存对话框产生。取消返回 null。 */
+  exportLedger: (format: LedgerExportFormat, filter: LedgerFilter) => Promise<string | null>
   importBackup: (passphrase: string) => Promise<boolean>
   setMock: (enabled: boolean) => Promise<void>
   listLedger: (filter: LedgerFilter) => Promise<LedgerPageDTO>
@@ -834,4 +1200,46 @@ export interface MingZhangApi {
   getPanelHistory: () => Promise<PanelHistorySnapshotDTO>
   getBatchPresentation: (gateId: number) => Promise<BatchPresentationDTO>
   setBatchPresentation: (gateId: number, patch: Partial<BatchPresentationDTO>) => Promise<BatchPresentationDTO>
+  // === 第三/四阶段：商品经营 ===
+  listProducts: () => Promise<ProductDTO[]>
+  listProductsWithVariants: () => Promise<ProductWithVariantsDTO[]>
+  getProduct: (id: number) => Promise<ProductDTO | null>
+  getProductProfile: (id: number) => Promise<ProductProfileDTO | null>
+  updateProductPrice: (id: number, cents: number) => Promise<boolean>
+  // 规格
+  listVariants: (productId: number) => Promise<VariantDTO[]>
+  getVariant: (id: number) => Promise<VariantDTO | null>
+  getVariantProfile: (id: number) => Promise<VariantProfileDTO | null>
+  createVariant: (input: CreateVariantDTO) => Promise<number>
+  updateVariant: (input: UpdateVariantDTO) => Promise<boolean>
+  deleteVariant: (id: number) => Promise<boolean>
+  updateVariantPrice: (id: number, cents: number) => Promise<boolean>
+  // 记账
+  recordSale: (input: SaleInputDTO) => Promise<SaleResultDTO>
+  recordPurchase: (input: PurchaseInputDTO) => Promise<PurchaseResultDTO>
+  recordRefund: (input: RefundInputDTO) => Promise<RefundResultDTO>
+  recordCSIncome: (input: CSIncomeInputDTO) => Promise<number>
+  recordOther: (input: OtherInputDTO) => Promise<number>
+  recordExpense: (input: ExpenseInputDTO) => Promise<number>
+  listChannels: () => Promise<{ income: readonly string[]; expense: readonly string[]; refund: readonly string[]; expenseCategories: readonly string[] }>
+  // 第五阶段：经营概览 + 盈亏测算
+  getBusinessOverview: (range?: OverviewRangeDTO) => Promise<BusinessOverviewDTO>
+  calculateProfit: (input: ProfitCalcInputDTO) => Promise<ProfitCalcResultDTO>
+  // 第六阶段：月度报表 + 趋势
+  getMonthlyReport: (month: string) => Promise<MonthlyReportDTO>
+  listBusinessMonths: (limit?: number) => Promise<string[]>
+  getTrend: (months?: number, endMonth?: string) => Promise<TrendPointDTO[]>
+  // 第七阶段：Excel 导出 + 备份管理
+  exportBusinessExcel: (month?: string | null) => Promise<string | null>
+  createBusinessSnapshot: () => Promise<string | null>
+  listBusinessSnapshots: () => Promise<SnapshotDTO[]>
+  getBackupsDir: () => Promise<string | null>
+  // 第八阶段：快捷记账模板
+  listTemplates: (kind?: TemplateKindDTO) => Promise<QuickTemplateDTO[]>
+  getTemplate: (id: number) => Promise<QuickTemplateDTO | null>
+  createTemplate: (input: CreateTemplateDTO) => Promise<number>
+  updateTemplate: (input: UpdateTemplateDTO) => Promise<boolean>
+  deleteTemplate: (id: number) => Promise<boolean>
+  touchTemplate: (id: number) => Promise<boolean>
+  templateCounts: () => Promise<Record<TemplateKindDTO, number>>
 }

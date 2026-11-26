@@ -44,6 +44,7 @@ vi.mock('../src/main/secrets/store', () => ({ SecretsStore: class { requireAvail
 vi.mock('../src/main/config/store', () => ({ ConfigStore: class { load() { return { theme: 'light', onboarded: false, mock: true } } }, normalizeTheme: () => 'light' }))
 vi.mock('../src/main/db/connection', async () => ({ ...(await vi.importActual<any>('../src/main/db/connection')), openLedger: () => ({ close: state.close }), initSchemaIfEmpty: vi.fn() }))
 vi.mock('../src/main/db/seed', () => ({ seed: vi.fn() }))
+vi.mock('../src/main/db/seed-business', () => ({ seedBusiness: vi.fn() }))
 vi.mock('../src/main/engine/engine', () => ({ Engine: class {
   started = false
   async start() { this.started = true }
@@ -51,6 +52,7 @@ vi.mock('../src/main/engine/engine', () => ({ Engine: class {
   startupReport() {}
 } }))
 vi.mock('../src/main/ipc', () => ({ registerIpc: (context: unknown) => { state.ipc = context } }))
+vi.mock('../src/main/ipc-business', () => ({ registerBusinessIpc: vi.fn() }))
 vi.mock('../src/main/ipc-settings', () => ({ registerSettingsIpc: () => { throw state.original } }))
 vi.mock('../src/main/domain/backup', () => ({ recoverInterruptedRestore: vi.fn(), autoSnapshotIfNeeded: vi.fn(), sweepPlainResidues: vi.fn() }))
 vi.mock('../src/main/startup-failure', () => ({ showStartupFailure: (error: unknown) => makeWindow('failure', error) }))

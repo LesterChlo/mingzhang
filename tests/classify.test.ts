@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import * as toolsM5 from '../src/main/engine/tools-m5'
 import type { ClassifyGroupDTO, ClassifyProposalDTO } from '../src/shared/types'
 import { seed } from '../src/main/db/seed'
@@ -42,6 +42,7 @@ function tmpFile(): string {
 function mkDb(file: string) {
   const db = openSchemaDb(file)
   seed(db)
+  seedCustomCategories(db)
   return db
 }
 

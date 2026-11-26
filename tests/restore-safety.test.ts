@@ -192,7 +192,7 @@ describe('R5 旧快照 user_version=1 兼容', () => {
     const db = new DatabaseCtor(current)
     db.pragma(`key = "x'${dek}'"`)
     db.pragma("cipher='chacha20'")
-    expect(db.pragma('user_version', { simple: true })).toBe(2)
+    expect(db.pragma('user_version', { simple: true })).toBe(6)
     expect(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='bill_tables'").get()).toMatchObject({ n: 1 })
     expect(db.prepare('SELECT merchant FROM transactions').get()).toMatchObject({ merchant: '王家饭馆' })
     db.close()

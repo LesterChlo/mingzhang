@@ -14,6 +14,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# npm 的机器级配置（如 msbuild_path 写死本机 VS 安装路径，换机即失效）
+.npmrc
 
 # 本地数据
 data/

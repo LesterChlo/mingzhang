@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { createTransaction, requestReview, updateFields } from '../src/main/domain/ledger'
 import { prepareClassify, applyClassify } from '../src/main/domain/classify'
@@ -8,7 +8,7 @@ import { updateCategoryRule, deactivateCategoryRule } from '../src/main/domain/c
 import { saveCategoryRule, listCategoryRules } from '../src/main/domain/category-rules'
 
 function fixture() {
-  const db = openSchemaDb(':memory:'); seed(db)
+  const db = openSchemaDb(':memory:'); seed(db);seedCustomCategories(db)
   const tx = createTransaction(db, { amountCents: 100, txType: 'expense', merchant: '合成严格保存' })
   requestReview(db, tx, { reason: 'synthetic' })
   const gate = prepareClassify(db, { sessionId: 'ui', assignments: [{ groupKey: 'expense::合成严格保存', categoryName: '餐饮' }] })

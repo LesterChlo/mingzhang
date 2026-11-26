@@ -12,6 +12,7 @@ import { createTransaction, getSetting, getTransaction, listAccounts, resolveAcc
 import { queryLedgerPage } from '../src/main/domain/ledger-page'
 import { createPending, getPending, listOpen } from '../src/main/domain/pending'
 import { createRule, listRules, matchRule } from '../src/main/domain/rules'
+import { seedCustomCategories } from './helpers'
 const KEY = '98'.repeat(32)
 function identifiersUpper(sql: string): string {
   // All keywords/identifiers outside data literals and comments. No enum values are transformed.
@@ -41,7 +42,7 @@ function fixture(kind: 'canonical' | 'settings' | 'accounts' | 'transactions' | 
   recoverInterruptedRestore(file, { dekHex: KEY })
   expect(readFileSync(file)).toEqual(original) // recovery must not edit the live database to "fix" case.
   const db = openLedger(file, { get: () => KEY, set: () => { throw new Error('unexpected key write') } } as never)
-  try { initSchemaIfEmpty(db); seed(db); return db } catch (err) { db.close(); throw err }
+  try { initSchemaIfEmpty(db); seed(db); seedCustomCategories(db); return db } catch (err) { db.close(); throw err }
 }
 describe('equivalent schema must serve actual application domains', () => {
   it.each(['canonical', 'settings', 'accounts', 'transactions', 'all'] as const)('%s identifiers: settings, ledger DTO, confirmation and audit remain usable', kind => {

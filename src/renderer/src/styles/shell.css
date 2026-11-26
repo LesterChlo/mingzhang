@@ -1,4 +1,4 @@
-/* 明账 · 应用外壳样式（方向 A）
+/* 记账中心 · 应用外壳样式（方向 A）
  * 结构与数值来自设计规格的「窗口骨架 / 导航 / 主区」三段，
  * 只做两处必要偏离：
  *   1) 类名全部加 mz- 前缀 —— 旧对话式 UI 的 styles.css 仍在加载，.card/.badge/.btn/.tag 等
@@ -1140,6 +1140,15 @@
 }
 .mz-agg-sep {
   color: var(--text-3);
+}
+
+/* 账本导出条：与汇总行同一视觉节奏，不引入新 token */
+.mz-exportbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
 }
 
 /* 表格 */

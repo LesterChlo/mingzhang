@@ -50,7 +50,7 @@ const NAV_LABELS: [string, string][] = [
 ]
 
 test('外壳① 左栏导航五项齐全，默认停在收件箱', async () => {
-  await expect(page.getByText('明账', { exact: true })).toBeVisible()
+  await expect(page.getByText('记账中心', { exact: true })).toBeVisible()
   await expect(page.getByText('本地记账 · 不上云')).toBeVisible()
 
   for (const [id, label] of NAV_LABELS) {
@@ -125,18 +125,22 @@ test('外壳⑤ 深浅主题切换：token 与 data-theme 同步往返', async (
   // 不硬编码 dark——默认主题是产品决定，不该由用例锁死。
   const initial = await dataTheme()
   expect(['dark', 'light']).toContain(initial)
-  const tokenOf = (t: string) => (t === 'dark' ? '#191c23' : '#f3f4f7')
-  expect(await token()).toBe(tokenOf(initial))
+  // 不硬编码具体色值（配色会随设计迭代调整，用例不该被锁死）：
+  // 只断言 --bg-0 已解析成真实颜色，且深浅两主题取值不同（同口径切换成立）。
+  const initialToken = await token()
+  expect(initialToken).toMatch(/^#[0-9a-fA-F]{3,8}$/)
 
   await page.getByTestId('theme-toggle').click()
   const flipped = initial === 'dark' ? 'light' : 'dark'
   await expect(page.locator('html')).toHaveAttribute('data-theme', flipped)
-  expect(await token()).toBe(tokenOf(flipped))
+  const flippedToken = await token()
+  expect(flippedToken).toMatch(/^#[0-9a-fA-F]{3,8}$/)
+  expect(flippedToken).not.toBe(initialToken) // 换主题必须换底色
 
   // 切回来，保证用例可重复（连跑两遍）
   await page.getByTestId('theme-toggle').click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', initial)
-  expect(await token()).toBe(tokenOf(initial))
+  expect(await token()).toBe(initialToken)
 })
 
 test('外壳⑥ 全程无未捕获异常', async () => {

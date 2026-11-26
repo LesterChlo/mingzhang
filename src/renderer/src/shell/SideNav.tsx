@@ -71,6 +71,16 @@ const NAV: NavEntry[] = [
     ),
   },
   {
+    id: 'business',
+    label: '经营',
+    icon: icon(
+      <>
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <path d="M9 22V12h6v10" />
+      </>,
+    ),
+  },
+  {
     id: 'settings',
     label: '设置',
     icon: icon(
@@ -140,7 +150,7 @@ export function SideNav({
   return (
     <nav className="mz-nav" aria-label="主导航">
       <div className="mz-brand">
-        <div className="mz-brand-name">明账</div>
+        <div className="mz-brand-name">记账中心</div>
         <div className="mz-brand-sub">本地记账 · 不上云</div>
       </div>
 

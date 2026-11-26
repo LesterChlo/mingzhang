@@ -1,7 +1,8 @@
 // IPC 面：渲染层唯一入口。类型化 handler，全部走主进程模块。
 
-import { ipcMain, nativeTheme, nativeImage, type WebContents } from 'electron'
+import { ipcMain, nativeTheme, nativeImage, dialog, type WebContents } from 'electron'
 import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
 import { convertToPng } from '@earendil-works/pi-coding-agent'
 import { imageMagicMatches } from './attachment-files'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
@@ -31,6 +32,7 @@ import {
   writeConfidenceThreshold,
 } from './domain/ledger-page'
 import { getBatchSummary, getLatestBatchSummary } from './domain/batch-summary'
+import { buildLedgerCsv, buildLedgerXlsx, collectLedgerRows, type LedgerExportFormat } from './domain/ledger-export'
 import { getBatchPresentation, setBatchPresentation } from './domain/view-state'
 import type { BatchPresentationDTO, PanelHistorySnapshotDTO } from '../shared/types'
 import { listMonthSummaries } from './domain/reports'
@@ -439,6 +441,28 @@ export function registerIpc(ctx: IpcContext, meta: { dataDir: string; dbFile: st
     const db = ctx.getDb()
     if (!db) return { items: [], total: 0, agg: emptyLedgerAgg(filter.month || null) }
     return queryLedgerPage(db, filter)
+  })
+
+  // 账本导出：路径只由主进程保存对话框产生，渲染层不能传任意路径。
+  // 导出内容是已筛选流水的只读副本，不触碰账本、审计与加密材料。
+  ipcMain.handle('mz:exportLedger', async (_e, format: LedgerExportFormat, filter: LedgerFilter): Promise<string | null> => {
+    if (format !== 'csv' && format !== 'xlsx') throw new Error('导出格式无效')
+    const db = ctx.getDb()
+    if (!db) throw new Error('账本未就绪')
+    const safeFilter = filter && typeof filter === 'object' ? filter : {}
+    const day = new Date().toISOString().slice(0, 10)
+    const result = await dialog.showSaveDialog({
+      title: '导出账本流水',
+      defaultPath: `记账中心-流水-${day}.${format}`,
+      filters: [
+        { name: format === 'csv' ? 'CSV（逗号分隔）' : 'Excel 工作簿', extensions: [format] },
+      ],
+    })
+    if (result.canceled || !result.filePath) return null
+    const rows = collectLedgerRows(db, safeFilter)
+    const content = format === 'csv' ? buildLedgerCsv(rows) : buildLedgerXlsx(rows)
+    writeFileSync(result.filePath, content)
+    return result.filePath
   })
 
   // D-03a: 批次结果按批次读回（不传 gateId = 最近一次已执行的批次）。

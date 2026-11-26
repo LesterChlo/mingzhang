@@ -1,4 +1,5 @@
-// 预置数据（幂等）：4 账户 + 8 分类 + settings 键。与 legacy seed.py 一一对应（计划书 §5.6）——另新增咖啡/交通常用支出分类。
+// 预置数据（幂等）：4 账户 + 18 分类 + settings 键。前 8 个是历史分类，ID 1~8 固定不变
+// （历史账目与 renamedNames 改名审计都依赖它）；其后 10 个是国人习惯细分分类。
 
 import type { Database } from 'better-sqlite3-multiple-ciphers'
 import { nowIso } from './time'
@@ -11,6 +12,7 @@ const ACCOUNTS: [string, string][] = [
 ]
 
 const CATEGORIES: [string, string][] = [
+  // —— 历史前 8 个：ID 1~8 不可重排 ——
   ['餐饮', 'expense'],
   ['咖啡', 'expense'],
   ['交通', 'expense'],
@@ -19,6 +21,17 @@ const CATEGORIES: [string, string][] = [
   ['生活费', 'income'],
   ['红包', 'income'],
   ['其他', 'income'],
+  // —— 记账中心国人习惯细分：支出 6 个 + 收入 4 个 ——
+  ['居家', 'expense'],
+  ['娱乐', 'expense'],
+  ['医疗', 'expense'],
+  ['教育', 'expense'],
+  ['人情', 'expense'],
+  ['旅行', 'expense'],
+  ['工资', 'income'],
+  ['奖金', 'income'],
+  ['理财', 'income'],
+  ['兼职', 'income'],
 ]
 
 const SETTINGS: [string, string][] = [

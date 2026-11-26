@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 const { handlers, invokes, expose } = vi.hoisted(() => ({handlers:new Map<string,(...args:any[])=>any>(),invokes:vi.fn(),expose:vi.fn()}))
 vi.mock('electron', () => ({ipcMain:{handle:(name:string,fn:(...args:any[])=>any)=>handlers.set(name,fn)},nativeTheme:{},ipcRenderer:{invoke:invokes,on:vi.fn(),removeListener:vi.fn()},contextBridge:{exposeInMainWorld:expose}}))
 import { registerIpc } from '../src/main/ipc'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { prepareBatch, executeBatch } from '../src/main/domain/batch'
 import { describeImportException } from '../src/main/domain/import-exceptions'
@@ -16,7 +16,7 @@ it('preload精确转发冻结的异常读取与结构化输入，不改名不增
 })
 
 it('真实IPC按当前动态DB附领域DTO，严格参数拒绝零写，提交只处理原行', () => {
-  const first = openSchemaDb(':memory:'), second = openSchemaDb(':memory:');seed(first);seed(second)
+  const first = openSchemaDb(':memory:'), second = openSchemaDb(':memory:');seed(first);seedCustomCategories(first);seed(second);seedCustomCategories(second)
   let current = first
   try {
     registerIpc({getDb:()=>current} as never,{dataDir:'synthetic',dbFile:':memory:'})

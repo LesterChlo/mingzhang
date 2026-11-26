@@ -223,8 +223,8 @@ export function registerSettingsIpc(ctx: SettingsIpcContext): void {
     if (!passphrase || passphrase.length < 8) throw new Error('口令至少 8 位；忘口令不可恢复，请务必记牢')
     const r = await dialog.showSaveDialog({
       title: '保存跨机备份包',
-      defaultPath: `mingzhang-backup-${new Date().toISOString().slice(0, 10)}.mzbackup`,
-      filters: [{ name: '明账备份包', extensions: ['mzbackup'] }],
+      defaultPath: `jizhangzhongxin-backup-${new Date().toISOString().slice(0, 10)}.mzbackup`,
+      filters: [{ name: '记账中心备份包', extensions: ['mzbackup'] }],
     })
     if (r.canceled || !r.filePath) return null
     await exportPassphraseBackup(db, ctx.backupsDir, passphrase, r.filePath)
@@ -235,7 +235,7 @@ export function registerSettingsIpc(ctx: SettingsIpcContext): void {
     if (!passphrase) throw new Error('需要口令')
     const r = await dialog.showOpenDialog({
       title: '选择备份包',
-      filters: [{ name: '明账备份包', extensions: ['mzbackup'] }],
+      filters: [{ name: '记账中心备份包', extensions: ['mzbackup'] }],
       properties: ['openFile'],
     })
     if (r.canceled || r.filePaths.length === 0) return false

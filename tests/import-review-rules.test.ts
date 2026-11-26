@@ -1,10 +1,10 @@
 import { afterEach, expect, it } from 'vitest'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { createRule, matchRule, applyRules, resolveRuleMatch } from '../src/main/domain/rules'
 import { classifyByMerchant } from '../src/main/domain/builtin-categories'
 const db = openSchemaDb(':memory:')
-seed(db)
+seed(db);seedCustomCategories(db)
 afterEach(() => db.exec('DELETE FROM rules'))
 it('不同分类多命中是可见冲突，导入兜底不得覆盖冲突', () => {
   createRule(db, { match: 'merchant', op: 'contains', value: '星巴克' }, { set_category: '咖啡' })

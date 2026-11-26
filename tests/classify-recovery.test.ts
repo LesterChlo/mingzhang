@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { openSchemaDb, openPlainDb } from './helpers'
+import { openSchemaDb, openPlainDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { createTransaction, requestReview, updateFields } from '../src/main/domain/ledger'
 import { closePending } from '../src/main/domain/pending'
@@ -11,7 +11,7 @@ import { prepareClassify, applyClassify, undoClassify, getClassifyResults } from
 
 it('重启后按批次恢复分次执行来源和真实候选，查询不写任何表', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'mz-synthetic-recovery-')), 'ledger.db')
-  let db = openSchemaDb(file); seed(db)
+  let db = openSchemaDb(file); seed(db);seedCustomCategories(db)
   const gates: number[] = []
   for (const merchant of ['合成恢复甲', '合成恢复乙']) {
     const id = createTransaction(db, { amountCents: 123, txType: 'expense', merchant, sourceMessageId: 'recovery-batch' })
@@ -37,7 +37,7 @@ it('重启后按批次恢复分次执行来源和真实候选，查询不写任�
 })
 
 function fixture(merchant: string | null = '合成生命周期', count = 2) {
-  const db = openSchemaDb(':memory:'); seed(db)
+  const db = openSchemaDb(':memory:'); seed(db);seedCustomCategories(db)
   const ids = Array.from({length:count}, () => {
     const id = createTransaction(db, {amountCents:100,txType:'expense',merchant,sourceMessageId:'lifecycle'})
     requestReview(db,id,{reason:'synthetic'}); return id

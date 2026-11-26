@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { prepareBatch, executeBatch } from '../src/main/domain/batch'
 import { stageBill, applyBillPlan } from '../src/main/domain/bill'
@@ -13,7 +13,7 @@ import { answerPending } from '../src/main/domain/pending-answer'
 import * as exceptions from '../src/main/domain/import-exceptions'
 
 const dbs: ReturnType<typeof openSchemaDb>[] = []
-function fixture() { const db = openSchemaDb(join(mkdtempSync(join(tmpdir(), 'mz-exception-parent-')), 'synthetic.db')); seed(db); dbs.push(db); return db }
+function fixture() { const db = openSchemaDb(join(mkdtempSync(join(tmpdir(), 'mz-exception-parent-')), 'synthetic.db')); seed(db); seedCustomCategories(db); dbs.push(db); return db }
 afterEach(() => { for (const db of dbs.splice(0)) db.close() })
 function state(db: ReturnType<typeof fixture>) {
   return Object.fromEntries(['transactions','imports','pending_clarifications','audit_log','accounts','categories','rules','settings','bill_tables','bill_rows','sqlite_sequence'].map(name => [name, db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all()]))

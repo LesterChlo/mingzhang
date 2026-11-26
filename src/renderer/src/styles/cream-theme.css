@@ -1,0 +1,765 @@
+/* ============================================================================
+ * Creamy Cozy｜奶油治愈风视觉覆盖层
+ *
+ * 定位：只做「外观升级」，不碰任何业务逻辑、不改任何功能入口。
+ * 全部通过 CSS 变量 + 选择器覆盖实现，JSX 结构保持原样
+ * （唯一例外是首页仪表盘新增的欢迎区/数字动画，见 BusinessDashboard.tsx）。
+ *
+ * 加载顺序：必须排在 tokens.css / shell.css / finance-theme.css 之后，
+ * 以及各视图 CSS 之后（在 main.tsx 末尾引入），这样细节覆盖才生效。
+ *
+ * 设计要点：
+ *   1. 侧边栏轻盈——奶油白底、无厚重分割，选中项用浅燕麦色圆角块
+ *   2. 卡片轻拟物——16px 圆角、极柔暖阴影、1px 暖色细边框、顶部微高光
+ *   3. 数字优先——财务数字用等宽数字特性，大小对比拉开
+ *   4. 微交互——悬停上浮、点击轻缩、页面柔和淡入（180-280ms）
+ *   5. 层次——不是所有卡片都一样，用 --cream/--bg-2 制造明度差
+ * ========================================================================== */
+
+/* ══════════════════════════ 1. 全局基底 ══════════════════════════ */
+
+.mz-shell {
+  /* 窗口底色带一层极淡的暖色径向光晕，避免大面积纯色发闷 */
+  background:
+    radial-gradient(ellipse 900px 500px at 15% -5%, color-mix(in srgb, var(--cream) 55%, transparent) 0%, transparent 70%),
+    var(--bg-0);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 数字统一等宽，保证金额竖向对齐（财务软件的基本要求） */
+.mz-shell .mz-num,
+.mz-shell [class*='amount'],
+.mz-shell [class*='total'] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* 滚动条：细、暖、不抢视线 */
+.mz-shell ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.mz-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mz-shell ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-3) 30%, transparent);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.mz-shell ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-3) 50%, transparent);
+  background-clip: padding-box;
+}
+
+/* 焦点环：柔和鼠尾草绿，不用刺眼的浏览器默认蓝 */
+.mz-shell button:focus-visible,
+.mz-shell input:focus-visible,
+.mz-shell select:focus-visible,
+.mz-shell textarea:focus-visible,
+.mz-shell [tabindex]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
+/* ══════════════════════════ 2. 左侧导航栏 ══════════════════════════ */
+
+.mz-shell .mz-nav {
+  width: 216px;
+  padding: var(--sp-6) var(--sp-3) var(--sp-4);
+  /* 奶油白底 + 右侧一条极淡的边缘光，不用硬边框 */
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  position: relative;
+}
+
+/* 品牌区：加一个圆形标记 + 收紧排版 */
+.mz-shell .mz-brand {
+  padding: 0 var(--sp-2) var(--sp-6);
+  position: relative;
+}
+.mz-shell .mz-brand-name {
+  font-size: 17px;
+  font-weight: var(--fw-strong);
+  letter-spacing: 0.01em;
+  color: var(--text-1);
+  /* 用一个小圆点做品牌标记，克制不花哨 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mz-shell .mz-brand-name::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: linear-gradient(135deg, var(--sage), var(--accent));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.mz-shell .mz-brand-sub {
+  font-size: var(--fs-t5);
+  color: var(--text-3);
+  margin-top: 4px;
+  padding-left: 17px; /* 与品牌名对齐 */
+  letter-spacing: 0.02em;
+}
+
+/* 导航项：更高的行高、更圆的选中块、细腻过渡 */
+.mz-shell .mz-nav-item {
+  height: 40px;
+  padding: 0 12px;
+  margin-bottom: 3px;
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  font-size: var(--fs-t3);
+  gap: 11px;
+  transition:
+    background var(--dur-hover) var(--ease),
+    color var(--dur-hover) var(--ease),
+    transform var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-nav-item svg {
+  flex: none;
+  opacity: 0.72;
+  transition: opacity var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-nav-item:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.mz-shell .mz-nav-item:hover svg {
+  opacity: 1;
+}
+/* 选中：浅燕麦底 + 左侧鼠尾草绿指示条 + 字重加深 */
+.mz-shell .mz-nav-item.is-active {
+  background: color-mix(in srgb, var(--oat) 42%, var(--bg-1));
+  color: var(--text-1);
+  font-weight: var(--fw-strong);
+  position: relative;
+}
+.mz-shell .mz-nav-item.is-active svg {
+  opacity: 1;
+  color: var(--accent-strong);
+}
+.mz-shell .mz-nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+/* 角标：奶油风胶囊 */
+.mz-shell .mz-nav-badge {
+  min-width: 21px;
+  height: 19px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: var(--fw-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 主题切换 + 锁标：弱化处理，不抢主视觉 */
+.mz-shell .mz-theme-toggle {
+  border-radius: var(--radius-control);
+  color: var(--text-3);
+  transition: background var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-theme-toggle:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+
+.mz-shell .mz-lock {
+  border-radius: var(--radius-control);
+  transition: background var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-lock:hover {
+  background: var(--bg-2);
+}
+
+/* ══════════════════════════ 3. 主内容区 ══════════════════════════ */
+
+.mz-shell .mz-main {
+  background: var(--bg-0);
+  position: relative;
+}
+
+/* 页面切换：柔和淡入 + 极轻微上浮 */
+.mz-shell .mz-view {
+  animation: mzViewIn var(--dur-page) var(--ease-out) both;
+}
+@keyframes mzViewIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* 尊重系统的「减少动效」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .mz-shell .mz-view,
+  .mz-shell * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══════════════════════════ 4. 卡片（轻拟物核心） ══════════════════════════ */
+
+.mz-shell .mz-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  /* 顶部一道极细高光，营造"浮起"的轻拟物感 */
+  background-image: linear-gradient(180deg, var(--shadow-inset), transparent 42%);
+  transition:
+    transform var(--dur-hover) var(--ease),
+    box-shadow var(--dur-hover) var(--ease),
+    border-color var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+  border-color: color-mix(in srgb, var(--line-strong) 70%, var(--line));
+}
+
+.mz-shell .mz-card-head {
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* ══════════════════════════ 5. 按钮 ══════════════════════════ */
+
+.mz-shell .mz-btn {
+  border-radius: var(--radius-control);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+  transition:
+    background var(--dur-hover) var(--ease),
+    border-color var(--dur-hover) var(--ease),
+    transform 90ms var(--ease),
+    box-shadow var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-btn:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+/* 点击轻微缩放——真实按键手感，幅度极小避免跳动 */
+.mz-shell .mz-btn:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+/* 主按钮：鼠尾草绿实心，带一点点渐变提升质感 */
+.mz-shell .mz-btn-primary {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 92%, white),
+    var(--accent-strong)
+  );
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: var(--fw-strong);
+  box-shadow: 0 1px 2px rgba(90, 74, 56, 0.12);
+}
+.mz-shell .mz-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(
+    180deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent-strong) 92%, black)
+  );
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 次要按钮：奶油白 */
+.mz-shell .mz-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+.mz-shell .mz-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+
+/* 危险按钮：低饱和砖红，不刺眼 */
+.mz-shell .mz-btn-danger {
+  background: var(--danger-dim);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  color: var(--danger);
+}
+.mz-shell .mz-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+.mz-shell .mz-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ══════════════════════════ 6. 输入框 / 表单 ══════════════════════════ */
+
+.mz-shell .mz-input,
+.mz-shell input[type='text'],
+.mz-shell input[type='number'],
+.mz-shell input[type='date'],
+.mz-shell input[type='datetime-local'],
+.mz-shell select,
+.mz-shell textarea {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--text-1);
+  transition:
+    border-color var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease),
+    box-shadow var(--dur-hover) var(--ease);
+}
+.mz-shell .mz-input:hover,
+.mz-shell input[type='text']:hover,
+.mz-shell input[type='number']:hover,
+.mz-shell select:hover,
+.mz-shell textarea:hover {
+  border-color: var(--line-strong);
+}
+/* 聚焦：柔和的鼠尾草绿边框 + 光晕，不用粗描边 */
+.mz-shell .mz-input:focus,
+.mz-shell input[type='text']:focus,
+.mz-shell input[type='number']:focus,
+.mz-shell input[type='date']:focus,
+.mz-shell input[type='datetime-local']:focus,
+.mz-shell select:focus,
+.mz-shell textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-1);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.mz-shell .mz-input::placeholder,
+.mz-shell input::placeholder,
+.mz-shell textarea::placeholder {
+  color: var(--text-3);
+}
+
+/* 表单标签：小字、加一点字距、弱色 */
+.mz-shell label {
+  color: var(--text-2);
+  font-size: var(--fs-t5);
+  letter-spacing: 0.01em;
+}
+
+/* ══════════════════════════ 7. 表格（轻量分隔） ══════════════════════════ */
+
+.mz-shell table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+/* 表头：不用底色块，只用小字+字距+一条淡线 */
+.mz-shell thead th {
+  font-size: var(--fs-t5);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  letter-spacing: 0.03em;
+  text-transform: none;
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+.mz-shell tbody td {
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text-1);
+  transition: background var(--dur-hover) var(--ease);
+}
+.mz-shell tbody tr:last-child td {
+  border-bottom: none;
+}
+.mz-shell tbody tr:hover td {
+  background: var(--accent-soft);
+}
+/* 表格里的金额列：右对齐 + 等宽数字 */
+.mz-shell tbody td.mz-num,
+.mz-shell thead th.mz-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ══════════════════════════ 8. 弹窗 / 浮层 ══════════════════════════ */
+
+.mz-shell [class*='profile'],
+.mz-shell [class*='modal'],
+.mz-shell [class*='overlay'] {
+  animation: mzFadeIn var(--dur-normal) var(--ease-out) both;
+}
+@keyframes mzFadeIn {
+  from { opacity: 0 }
+  to { opacity: 1 }
+}
+
+/* 弹窗卡片：更圆的角 + 上浮进场 */
+.mz-shell .mz-biz-profile-card {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card-lg);
+  box-shadow: var(--shadow-pop);
+  animation: mzPopIn var(--dur-normal) var(--ease-out) both;
+}
+@keyframes mzPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 弹窗遮罩：暖调半透明，不用纯黑 */
+.mz-shell .mz-biz-profile {
+  background: color-mix(in srgb, var(--text-1) 32%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+/* ══════════════════════════ 9. 提示 / 状态 ══════════════════════════ */
+
+/* Toast：奶油卡片 + 左侧语义色条 */
+.mz-shell [class*='toast'] {
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-toast);
+}
+
+/* 语义色工具类（供各页复用，统一口径） */
+.mz-shell .is-income,
+.mz-shell .is-pos {
+  color: var(--income);
+}
+.mz-shell .is-expense {
+  color: var(--expense);
+}
+.mz-shell .is-loss,
+.mz-shell .is-neg {
+  color: var(--loss);
+}
+.mz-shell .is-warn {
+  color: var(--warn);
+}
+
+/* 胶囊标签：退款状态、模板类型等。小字必须用加深版语义色（*-ink）才够对比。 */
+.mz-shell .mz-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-t5);
+  font-weight: var(--fw-medium);
+  background: var(--bg-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mz-shell .mz-pill.is-income { background: var(--income-dim); color: var(--income-ink) }
+.mz-shell .mz-pill.is-expense { background: var(--expense-dim); color: var(--expense-ink) }
+.mz-shell .mz-pill.is-loss { background: var(--danger-dim); color: var(--loss-ink) }
+.mz-shell .mz-pill.is-warn { background: var(--warn-dim); color: var(--warn-ink) }
+
+/* ══════════════════════════ 11. 顶部速记栏 ══════════════════════════ */
+
+/* 速记栏是五屏共享的常驻入口，做成"奶油胶囊"质感，聚焦时柔和发光 */
+.mz-shell .mz-capture {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--dur-normal) var(--ease),
+    box-shadow var(--dur-normal) var(--ease);
+}
+
+.mz-shell .mz-capture:hover {
+  border-color: var(--line-strong);
+}
+
+/* 输入聚焦时整条栏轻微发光，给人"正在记录"的反馈 */
+.mz-shell .mz-capture:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 3px var(--accent-dim);
+}
+
+/* 底部固定操作条（复核/表单提交）：磨砂奶油底，滚动时内容不糊在一起 */
+.mz-shell .mz-review-actions,
+.mz-shell [class*='actions-bar'] {
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ══════════════════════════ 13. 账本金额语义色 ══════════════════════════ */
+
+/* 需求：「提升收入、支出和利润的区分度」。
+   金额是账本的核心信息，收入/支出必须一眼可辨；但用加深版（*-ink）而非亮色，
+   保证 14px 正文在奶油底上仍过 AA。支出不再与普通文字同色。 */
+.mz-shell .mz-amt-income {
+  color: var(--income-ink);
+  font-weight: var(--fw-medium);
+}
+
+.mz-shell .mz-amt-expense {
+  color: var(--expense-ink);
+  font-weight: var(--fw-medium);
+}
+
+.mz-shell .mz-amt-transfer {
+  color: var(--text-2);
+}
+
+/* 状态胶囊（已确认 / 待确认 / 已删除）：11.5px 小字必须用加深版语义色才够对比 */
+.mz-shell .mz-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 21px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.mz-shell .mz-tag-green { background: var(--income-dim); color: var(--income-ink) }
+.mz-shell .mz-tag-yellow { background: var(--warn-dim); color: var(--warn-ink) }
+.mz-shell .mz-tag-blue { background: var(--info-dim); color: var(--info-ink) }
+.mz-shell .mz-tag-red { background: var(--danger-dim); color: var(--loss-ink) }
+.mz-shell .mz-tag-gray { background: var(--bg-2); color: var(--text-2) }
+
+/* ══════════════════════════ 14. 内容随窗口自适应（宽屏不留空白） ══════════════════════════
+ *
+ * 背景：早期为窄屏设计，多处写死 max-width（队列 640 / 设置 720 / 备份 860），
+ * 窗口一放大就变成「内容挤在左半边、右侧大片空白」，视觉上像没适配。
+ *
+ * 原则：
+ *   · 内容区宽度跟随窗口 → 用百分比/弹性布局，不再写死像素宽
+ *   · 但保留一个合理上限，防止 2560 宽屏上单行文字过长（阅读体验差）
+ *   · 上限取 1600px 左右：1920 屏几乎铺满，超宽屏居中仍有呼吸
+ */
+
+/* ① 收件箱：队列不再锁 640，右栏固定但整体可伸缩 */
+.mz-shell .mz-queue {
+  flex: 1 1 520px;
+  max-width: none; /* 取消 640px 死宽，让它吃掉剩余空间 */
+  min-width: 0;
+}
+
+/* 收件箱整体：占满主区宽度，不居中缩成一条 */
+.mz-shell .mz-inbox {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* ② 设置页：720 → 自适应。设置项是表单行 + 列表，宽一点更好读；
+   大屏再放宽，避免「窗口很大、设置卡挤在中间一小条」。 */
+.mz-shell .mz-route-scroll > .settings {
+  max-width: 1500px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ③ 备份导出页 */
+.mz-shell .mz-biz-backup {
+  max-width: none;
+}
+
+/* ④ 报告 / 账本 / 账户：统一内容上限，避免超宽屏单行过长 */
+.mz-shell .mz-report,
+.mz-shell .mz-ledger,
+.mz-shell .mz-accounts {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* ⑤ 主区本身：确保子元素能撑满（flex 子项默认 min-width:auto 会阻止收缩） */
+.mz-shell .mz-main {
+  min-width: 0;
+}
+
+.mz-shell .mz-view {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ⑥ 大屏（≥1680）：适度放大基础字号与间距，避免「字小、空多」的失真感 */
+@media (min-width: 1680px) {
+  .mz-shell {
+    --fs-t0: 38px;
+    --fs-t1: 23px;
+    --fs-t2: 17px;
+    --fs-t3: 15px;
+    --fs-t4: 14px;
+    --fs-t5: 13px;
+    --fs-money-lg: 27px;
+    --fs-money-md: 25px;
+    --fs-hero: 30px;
+    --fs-kpi: 22px;
+    --pad-page: 32px;
+    --gap-card: 16px;
+    --pad-card: 20px;
+  }
+  .mz-shell .mz-nav {
+    width: 232px;
+  }
+  .mz-shell .mz-nav-item {
+    height: 42px;
+    font-size: 15px;
+  }
+  .mz-shell .mz-brand-name {
+    font-size: 19px;
+  }
+}
+
+/* ⑦ 超大屏（≥2000）：再放大一档，让内容与技术分辨率匹配 */
+@media (min-width: 2000px) {
+  .mz-shell {
+    --fs-t0: 44px;
+    --fs-t1: 26px;
+    --fs-t2: 19px;
+    --fs-t3: 16px;
+    --fs-t4: 15px;
+    --fs-t5: 14px;
+    --fs-money-lg: 31px;
+    --fs-money-md: 28px;
+    --fs-hero: 34px;
+    --fs-kpi: 25px;
+    --pad-page: 40px;
+    --gap-card: 20px;
+    --pad-card: 22px;
+  }
+  .mz-shell .mz-nav {
+    width: 248px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .mz-shell .mz-nav-item {
+    height: 46px;
+    font-size: 16px;
+  }
+  .mz-shell .mz-inbox,
+  .mz-shell .mz-report,
+  .mz-shell .mz-ledger,
+  .mz-shell .mz-accounts,
+  .mz-shell .mz-biz {
+    max-width: 2100px;
+  }
+  /* 设置页在超大屏也放宽（表单行拉长仍好读，且有分栏空间） */
+  .mz-shell .mz-route-scroll > .settings {
+    max-width: 1900px;
+  }
+}
+
+/* ══════════════════════════ 12. 桌面端适配 ══════════════════════════ */
+
+/* 1366×768：收紧侧边栏与页面边距，保证主体横向空间 */
+@media (max-width: 1420px) {
+  .mz-shell .mz-nav {
+    width: 198px;
+    padding: var(--sp-4) var(--sp-2) var(--sp-3);
+  }
+  .mz-shell {
+    --pad-page: 20px;
+    --gap-card: 12px;
+  }
+}
+@media (max-width: 1280px) {
+  .mz-shell .mz-nav {
+    width: 184px;
+  }
+  .mz-shell {
+    --pad-page: 18px;
+  }
+}
+
+/* 小屏/平板：导航收窄成图标条 */
+@media (max-width: 1024px) {
+  .mz-shell .mz-nav {
+    width: 68px;
+    padding: var(--sp-4) var(--sp-2);
+  }
+  .mz-shell .mz-brand-name {
+    font-size: 0;
+    gap: 0;
+  }
+  .mz-shell .mz-brand-sub {
+    display: none;
+  }
+  .mz-shell .mz-nav-item {
+    justify-content: center;
+    padding: 0;
+    gap: 0;
+  }
+  .mz-shell .mz-nav-item > span:not(.mz-nav-badge) {
+    display: none;
+  }
+  .mz-shell .mz-nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    margin: 0;
+    min-width: 16px;
+    height: 16px;
+    font-size: 10px;
+  }
+  .mz-shell .mz-nav-item {
+    position: relative;
+  }
+  .mz-shell .mz-theme-toggle span {
+    display: none;
+  }
+  .mz-shell .mz-theme-toggle {
+    justify-content: center;
+  }
+  .mz-shell .mz-lock-tx {
+    display: none;
+  }
+  .mz-shell .mz-lock {
+    justify-content: center;
+  }
+}
+
+/* 防止任何情况下出现横向滚动条（改造验收要求） */
+.mz-shell .mz-main {
+  min-width: 0;
+  overflow-x: hidden;
+}
+.mz-shell .mz-view {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* 表格在窄屏可横向滚动，而不是撑破布局 */
+.mz-shell .mz-tablewrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}

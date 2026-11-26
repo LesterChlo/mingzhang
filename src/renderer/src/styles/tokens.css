@@ -1,107 +1,192 @@
-/* 明账 · 设计 token 层（方向 A「收件箱」）
+/* 记账中心 · 设计 token 层｜Creamy Cozy 奶油治愈风
  *
- * 依据（数值逐字照抄，不自由发挥）：色彩 token / 字号层级 / 间距·圆角·阴影 / 动效基调，
- * 并沿用设计稿里 :root 与 [data-theme="light"] 两组变量。
- * 变量名沿用预览 HTML 既有命名（--bg-0 / --bg-1 / --bg-2 / --text-1 / --line / --accent …）。
+ * 视觉定位：奶油白 + 燕麦色 + 浅咖色 + 鼠尾草绿。
+ *   温暖、治愈、轻盈、精致；轻拟物质感 + 细腻微交互；
+ *   专业商业软件的布局逻辑，但不用死板的后台灰蓝。
  *
- * 作用域为什么是 .mz-shell 而不是 :root：
- *   旧对话式 UI 的 styles.css 仍在加载，且它自己在 :root 定义了同名的 --accent(#3DA57F) 与
- *   --warn(#C98A1F)。token 若放 :root 会把旧 UI 的配色顶掉（违反"旧组件本单保留、不变色"）。
- *   挂在 .mz-shell 上则两套互不干扰；下一单删掉旧 styles.css 后，把选择器换成 :root 即可，
- *   变量名与值一个字都不用改。
+ * 变量名保持既有命名（--bg-0 / --bg-1 / --text-1 / --line / --accent …），
+ * 只换值不换名 —— 这样所有既有页面与组件无需改一行业务代码即可整体换肤。
  *
- * 深色为默认；浅色靠 [data-theme="light"] 覆盖。
- * 配置枚举与本层同口径（dark / light），无旧命名别名。
+ * 作用域是 .mz-shell（不是 :root）：旧对话式 UI 仍在加载且自己在 :root 定义了同名
+ * --accent / --warn，挂 :root 会顶掉旧 UI 配色。
+ *
+ * 深浅双主题：默认深色（夜间暖调），[data-theme="light"] 为奶油白主场景。
+ * 应用以浅色奶油为默认体验，深色是同色系的暖夜版本（不是冷蓝黑）。
  */
 
 .mz-shell {
   color-scheme: dark;
 
-  /* ---------- §4.1 色彩 ---------- */
-  --bg-0: #0e1013; /* 窗口底色 */
-  --bg-1: #151920; /* 面板 / 卡片 */
-  --bg-2: #1c212b; /* 嵌套区 / hover 底 */
-  --bg-3: #232a36;
-  --line: #242b37; /* 1px 分隔线 / 卡片边框 */
-  --line-strong: #2e3644;
-  --text-1: #e8eaee; /* 主文字 / 支出金额 */
-  --text-2: #9ba3af; /* 次文字 */
-  /* C 单（对比度）：#8a93a0 → #9aa4b1。旧值在卡片底（--bg-1）上 5.67:1、
-     窗口底（--bg-0）上 6.13:1 —— 过 AA 但 12px 小字发虚；新值 6.98:1（bg-1 实测）。 */
-  --text-3: #9aa4b1; /* 弱文字 / placeholder */
-  --accent: #3ecf8e; /* 主强调 / 待入账绿 / 收入 */
-  --accent-dim: rgba(62, 207, 142, 0.12);
-  --warn: #e8b44c; /* 待核对黄 */
-  --warn-dim: rgba(232, 180, 76, 0.12);
-  --danger: #e5534b; /* 删除红 */
-  --danger-dim: rgba(229, 83, 75, 0.12);
-  --info: #6aa9ff; /* 批量 / 月报卡蓝 */
-  --info-dim: rgba(106, 169, 255, 0.12);
-  --on-accent: #06110c; /* 强调色上的文字（预览 HTML btn-primary） */
-  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4); /* 弹层 */
+  /* ==================== 色彩：暖夜奶油（深色） ==================== */
+  /* 深色不做冷黑，用带褐调的暖炭灰，保持奶油系的"温度" */
+  --bg-0: #1a1713; /* 窗口底：暖炭 */
+  --bg-1: #221e19; /* 面板 / 卡片：暖褐黑 */
+  --bg-2: #2b2620; /* 嵌套区 / hover */
+  --bg-3: #352f27; /* 更深的凹槽 */
 
-  /* ---------- §4.2 字号层级（基准 14px） ---------- */
-  --font-sans: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --fs-t0: 32px; /* 报告大数字 */
-  --fs-t1: 20px; /* 页面标题、卡片总额 */
+  /* 深色主题下也保留"奶油"作为强调底色，用于高亮块 */
+  --cream: #3a3229;
+  --oat: #453b30;
+  --sage: #a9b9a0;
+  --clay: #cf9186;
+
+  --line: #332c24; /* 1px 分隔线（暖调，不用冷灰） */
+  --line-strong: #443b30;
+  --line-soft: #2a241d; /* 更淡的分隔（表格行内） */
+
+  --text-1: #f2ece1; /* 主文字：暖白（深色底上要够亮） */
+  --text-2: #c2b5a3; /* 次文字：燕麦灰 */
+  --text-3: #9a8d7d; /* 弱文字 / placeholder（不可再暗，否则正文读不清） */
+
+  /* 主强调：鼠尾草绿（深色下调亮，保证在暖黑底上够清晰） */
+  --accent: #9db896;
+  --accent-strong: #87a67f;
+  --accent-dim: rgba(157, 184, 150, 0.14);
+  --accent-soft: rgba(157, 184, 150, 0.08);
+
+  /* 语义色：不用刺目的纯红绿，全部低饱和 */
+  --income: #9db896; /* 收入：鼠尾草绿 */
+  --income-dim: rgba(157, 184, 150, 0.14);
+  --expense: #d9a06a; /* 支出：温和陶土橙 */
+  --expense-dim: rgba(217, 160, 106, 0.14);
+  --profit: #8fc08a; /* 盈利：自然绿 */
+  --loss: #cc7f78; /* 亏损：低饱和砖红 */
+  --warn: #dcb46e; /* 提醒：柔和琥珀 */
+  --warn-dim: rgba(220, 180, 110, 0.14);
+  --danger: #cc7f78;
+  --danger-dim: rgba(204, 127, 120, 0.14);
+  --info: #9bb4c9; /* 信息：柔和灰蓝（奶油系里唯一的冷调，克制使用） */
+  --info-dim: rgba(155, 180, 201, 0.14);
+
+  /* 小字胶囊专用深色（深色主题下反而要更亮才够对比） */
+  --income-ink: #b6ceae;
+  --expense-ink: #e6b586;
+  --profit-ink: #a9d49f;
+  --loss-ink: #e0a08f;
+  --warn-ink: #e8c98c;
+  --info-ink: #b6cbdd;
+
+  --on-accent: #16130f; /* 强调色上的文字 */
+  --on-solid: #221e19;
+
+  /* 阴影：极柔和、带暖调，不用纯黑投影 */
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.14);
+  --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.24), 0 8px 24px rgba(0, 0, 0, 0.2);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.4);
+
+  /* ==================== 字号层级（基准 14px） ==================== */
+  --font-sans: 'Segoe UI Variable Display', 'Segoe UI', Inter, 'PingFang SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  /* 财务数字：等宽数字 + 表格数字，保证金额竖向对齐 */
+  --font-num: 'Cascadia Mono', 'SF Mono', ui-monospace, Consolas, monospace;
+
+  --fs-t0: 34px; /* 报告大数字 */
+  --fs-t1: 21px; /* 页面标题、卡片总额 */
   --fs-t2: 16px; /* 卡片金额 */
-  --fs-t3: 14px; /* 正文、列表主行、AI 提问 */
+  --fs-t3: 14px; /* 正文、列表主行 */
   --fs-t4: 13px; /* 次要行、表单标签 */
-  --fs-t5: 12px; /* 辅助说明、依据行、角标、锁标 */
+  --fs-t5: 12px; /* 辅助说明、角标 */
   --fw-normal: 400;
+  --fw-medium: 500;
   --fw-strong: 600;
 
-  /* ---------- §4.3 间距（4 的倍数） ---------- */
+  /* 金额/标题专用字号：独立成 token，大屏断点可整体放大，
+     避免「窗口变大但数字还是那么小」的失真感。 */
+  --fs-money-lg: 24px; /* KPI 主数值 */
+  --fs-money-md: 23px; /* 商品卡主数值 */
+  --fs-hero: 26px; /* 首页欢迎语 */
+  --fs-kpi: 20px; /* 指标格数值 */
+
+  /* ==================== 间距（4 的倍数） ==================== */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-6: 24px;
   --sp-8: 32px;
-  --pad-card: 16px; /* 卡片内边距 */
-  --gap-card: 12px; /* 卡片间距 */
-  --pad-page: 24px; /* 页面边距 */
-  --gap-block: 32px; /* 区块间距 */
+  --pad-card: 18px; /* 卡片内边距，比原来略松，奶油风要透气 */
+  --gap-card: 14px;
+  --pad-page: 26px;
+  --gap-block: 32px;
 
-  /* ---------- §4.3 圆角 ---------- */
-  --radius-tag: 4px; /* 标签 */
-  --radius-control: 6px; /* 按钮 / 输入框 */
-  --radius-card: 8px; /* 卡片 */
-  --radius-overlay: 10px; /* 弹层 / 覆盖层 */
+  /* ==================== 圆角：奶油风的关键 ==================== */
+  --radius-tag: 8px; /* 标签 / 小胶囊 */
+  --radius-control: 10px; /* 按钮 / 输入框 */
+  --radius-card: 16px; /* 卡片：14-20px 区间 */
+  --radius-card-lg: 20px; /* 大卡片 / 弹窗 */
+  --radius-overlay: 18px; /* 弹层 */
+  --radius-pill: 999px; /* 胶囊 */
 
-  /* ---------- §4.3 阴影 ---------- */
-  --shadow-toast: 0 4px 12px rgba(0, 0, 0, 0.32);
-
-  /* ---------- §4.5 动效 ---------- */
-  --ease: cubic-bezier(0.2, 0, 0, 1);
-  --dur-hover: 80ms;
-  --dur-normal: 150ms;
-  --dur-page: 120ms; /* 页面切换 120ms 交叉淡入 */
+  /* ==================== 动效：轻量 150-300ms ==================== */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* 柔和进出 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* 减速（进场） */
+  --dur-hover: 180ms;
+  --dur-normal: 240ms;
+  --dur-page: 280ms;
 }
 
-/* ---------- §4.1 浅色覆盖 ---------- */
+/* ==================== 浅色：奶油白主场景 ==================== */
 [data-theme='light'] .mz-shell {
   color-scheme: light;
 
-  --bg-0: #f7f8fa;
-  --bg-1: #ffffff;
-  --bg-2: #f0f2f5;
-  --bg-3: #e8ebef;
-  --line: #e2e5ea;
-  --line-strong: #d2d7de;
-  --text-1: #1a1d23;
-  --text-2: #5c6470;
-  /* C 单（对比度）：#646c78 → #5b636e。旧值在卡片底 5.31:1、窗口底 4.99:1，贴线过 AA；
-     新值 6.08:1（bg-1 实测），12px 小字不再发虚。 */
-  --text-3: #5b636e;
-  --accent: #0e9f6e;
-  --accent-dim: rgba(14, 159, 110, 0.1);
-  --warn: #b97f14;
-  --warn-dim: rgba(185, 127, 20, 0.1);
-  --danger: #d93a32;
-  --danger-dim: rgba(217, 58, 50, 0.1);
-  --info: #2b6fe0;
-  --info-dim: rgba(43, 111, 224, 0.1);
-  --on-accent: #06110c;
-  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
+  /* 背景层次：从最外到最内，明度递减、暖度递增 */
+  --bg-0: #f7f4ed; /* 全局背景：奶油白 */
+  --bg-1: #fffefa; /* 卡片：近纯白暖调 */
+  --bg-2: #f0eadf; /* 次级背景：燕麦 */
+  --bg-3: #e8ddcb; /* 浅燕麦（凹槽 / 选中底） */
+
+  --cream: #f5ebdd; /* 奶油米白：强调块 / 装饰 */
+  --oat: #e8ddcb; /* 浅燕麦 */
+  --sage: #a9b9a0; /* 鼠尾草绿 */
+  --clay: #d8aaa0; /* 柔和豆沙 */
+  --coffee: #b49b83; /* 浅咖啡 */
+
+  --line: #eae3d8; /* 边框：暖调 */
+  --line-strong: #ddd3c4;
+  --line-soft: #f2ece1; /* 表格行内淡分隔 */
+
+  --text-1: #49443d; /* 主文字：暖深褐（对奶油底 8.8:1） */
+  --text-2: #6d6458; /* 辅助文字：暖褐（对燕麦底 5.1:1，过 AA） */
+  --text-3: #665d52; /* 弱文字：仍需可读——小字不能比这更浅 */
+
+  /* 鼠尾草绿作为主强调：在奶油底上要够对比，取深一档 */
+  --accent: #7d9673;
+  --accent-strong: #6b8461;
+  --accent-dim: rgba(125, 150, 115, 0.13);
+  --accent-soft: rgba(125, 150, 115, 0.07);
+
+  /* 语义色全部低饱和，融入奶油系 */
+  --income: #7d9673; /* 收入：鼠尾草绿（用于大数字 / 色块） */
+  --income-dim: rgba(125, 150, 115, 0.13);
+  --expense: #c08a5e; /* 支出：温和陶土橙 */
+  --expense-dim: rgba(192, 138, 94, 0.13);
+  --profit: #6f9166; /* 盈利：自然绿 */
+  --loss: #b56f68; /* 亏损：低饱和砖红 */
+  --warn: #c69a52; /* 提醒：柔和琥珀 */
+  --warn-dim: rgba(198, 154, 82, 0.13);
+  --danger: #b56f68;
+  --danger-dim: rgba(181, 111, 104, 0.13);
+  --info: #7d94a8;
+  --info-dim: rgba(125, 148, 168, 0.13);
+
+  /* 小字胶囊 / 细标签专用：比上面深一档，保证在自身淡底色上过 AA。
+     语义色当大数字用可以柔和，但 11px 小字必须加深，否则看不清。 */
+  --income-ink: #58704f;
+  --expense-ink: #96663f;
+  --profit-ink: #4e6f46;
+  --loss-ink: #8f534d;
+  --warn-ink: #8a672c;
+  --info-ink: #5a7186;
+
+  --on-accent: #fffefa; /* 鼠尾草绿上的文字用奶油白 */
+  --on-solid: #49443d;
+
+  /* 阴影：暖褐调、极柔和，绝不厚重 */
+  --shadow-pop: 0 16px 40px rgba(90, 74, 56, 0.14), 0 2px 8px rgba(90, 74, 56, 0.06);
+  --shadow-card: 0 1px 2px rgba(122, 104, 82, 0.05), 0 3px 10px rgba(122, 104, 82, 0.045);
+  --shadow-card-hover: 0 2px 6px rgba(122, 104, 82, 0.07), 0 10px 26px rgba(122, 104, 82, 0.09);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --shadow-toast: 0 10px 30px rgba(90, 74, 56, 0.16);
 }

@@ -26,10 +26,17 @@ it('null 选择不是全选，旧方案缺少交易快照不能执行', () => {
 })
 it('内置建议不能提供不存在的分类，预览不新建分类', () => {
  const db=openSchemaDb(':memory:');seed(db)
- const tx=createTransaction(db,{amountCents:100,txType:'expense',merchant:'合成医院'});requestReview(db,tx,{reason:'test'})
+ // 「物业」在常识表映射到「居住」，而「居住」不在预置分类里——延续原断言口径。
+ const tx=createTransaction(db,{amountCents:100,txType:'expense',merchant:'合成物业'});requestReview(db,tx,{reason:'test'})
  const count=(db.prepare('SELECT COUNT(*) n FROM categories').get() as {n:number}).n
  expect(buildClassifyProposal(db).groups[0].suggestedCategory).toBeNull()
  expect((db.prepare('SELECT COUNT(*) n FROM categories').get() as {n:number}).n).toBe(count)
+ db.close()
+})
+it('预置分类已覆盖的常识建议可直接使用（医疗）', () => {
+ const db=openSchemaDb(':memory:');seed(db)
+ const tx=createTransaction(db,{amountCents:100,txType:'expense',merchant:'合成医院'});requestReview(db,tx,{reason:'test'})
+ expect(buildClassifyProposal(db).groups[0].suggestedCategory).toBe('医疗')
  db.close()
 })
 it('严格分类/覆盖校验，方案和结果提供真实选择及剩余数', () => {

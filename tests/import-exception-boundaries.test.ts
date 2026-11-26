@@ -4,7 +4,7 @@ vi.mock('electron',()=>({ipcMain:{handle:(name:string,fn:(...args:any[])=>any)=>
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { prepareBatch, executeBatch, batchFollowUpSummary } from '../src/main/domain/batch'
 import { stageBill, applyBillPlan, parseOccurredAt } from '../src/main/domain/bill'
@@ -17,7 +17,7 @@ import { createImport, createTransaction, getTransaction } from '../src/main/dom
 const dbs: ReturnType<typeof openSchemaDb>[] = []
 function fixture() {
   const db = openSchemaDb(join(mkdtempSync(join(tmpdir(), 'mz-exception-boundary-')), 'synthetic.db'))
-  seed(db); dbs.push(db); return db
+  seed(db); seedCustomCategories(db); dbs.push(db); return db
 }
 afterEach(() => { for (const db of dbs.splice(0)) db.close() })
 function state(db: ReturnType<typeof fixture>) {

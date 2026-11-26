@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { createRule, resolveRuleMatch } from '../src/main/domain/rules'
 import { undoClassify } from '../src/main/domain/classify'
 import { expect, it } from 'vitest'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { createTransaction, requestReview } from '../src/main/domain/ledger'
 import { prepareClassify, applyClassify } from '../src/main/domain/classify'
 import * as rules from '../src/main/domain/category-rules'
 
 it('重开文件库保留规则及幂等回执，撤销分类不删除规则', () => {
- const dir=mkdtempSync(join(tmpdir(),'mz-rule-synthetic-')); const file=join(dir,'synthetic.db'); let db=openSchemaDb(file); seed(db)
+ const dir=mkdtempSync(join(tmpdir(),'mz-rule-synthetic-')); const file=join(dir,'synthetic.db'); let db=openSchemaDb(file); seed(db);seedCustomCategories(db)
  try {
   const tx=createTransaction(db,{amountCents:100,txType:'expense',merchant:'合成持久店'}); requestReview(db,tx,{reason:'test'})
   const gate=prepareClassify(db,{sessionId:'ui',assignments:[{groupKey:'expense::合成持久店',categoryName:'餐饮'}]});applyClassify(db,gate.gateId)
@@ -27,7 +27,7 @@ it('重开文件库保留规则及幂等回执，撤销分类不删除规则', (
  } finally {db.close();rmSync(dir,{recursive:true,force:true})}
 })
 it('修改 contains 规则时检测其匹配范围内的精确规则冲突', () => {
- const db=openSchemaDb(':memory:');seed(db)
+ const db=openSchemaDb(':memory:');seed(db);seedCustomCategories(db)
  try{
   const broad=createRule(db,{match:'merchant',op:'contains',value:'合成',direction:'expense'},{set_category:'餐饮'})
   createRule(db,{match:'merchant',op:'equals',value:'合成分店',direction:'expense'},{set_category:'餐饮'})
@@ -38,7 +38,7 @@ it('修改 contains 规则时检测其匹配范围内的精确规则冲突', () 
  }finally{db.close()}
 })
 it('显式来源保存幂等，方向限定，冲突必须确认，修改停用有版本门', () => {
- const db = openSchemaDb(':memory:'); seed(db)
+ const db = openSchemaDb(':memory:'); seed(db);seedCustomCategories(db)
  try {
   const tx = createTransaction(db, {amountCents:100, txType:'expense',merchant:'合成规则店', sourceMessageId:'batch-r'})
   requestReview(db,tx,{reason:'测试'})

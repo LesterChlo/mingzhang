@@ -13,6 +13,7 @@ import { Engine } from '../src/main/engine/engine'
 import { ConfigStore, CONFIG_VERSION } from '../src/main/config/store'
 import { openLedger, initSchema } from '../src/main/db/connection'
 import { seed } from '../src/main/db/seed'
+import { seedCustomCategories } from './helpers'
 import { makeSolidColorPngBase64 } from '../src/main/wizard/png'
 import { GATE_FIELDS } from '../src/main/domain/pending'
 import type { ChatEvent } from '../src/shared/types'
@@ -137,6 +138,7 @@ beforeEach(async () => {
   db = openLedger(join(dataDir, 'mingzhang.db'), new FakeSecrets(join(dataDir, 'secrets')) as never)
   initSchema(db)
   seed(db)
+  seedCustomCategories(db)
 
   configFile = join(dataDir, 'config.json')
   writeFileSync(

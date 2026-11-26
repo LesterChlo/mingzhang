@@ -18,7 +18,9 @@ const state = vi.hoisted(() => ({
   openLedger: vi.fn(),
   initSchema: vi.fn(),
   seed: vi.fn(),
+  seedBusiness: vi.fn(),
   registerIpc: vi.fn(),
+  registerBusinessIpc: vi.fn(),
   registerSettingsIpc: vi.fn(),
   recover: vi.fn(),
   snapshot: vi.fn(),
@@ -120,6 +122,7 @@ vi.mock('../src/main/db/connection', () => ({
   readStartupDek: () => 'ef'.repeat(32),
 }))
 vi.mock('../src/main/db/seed', () => ({ seed: state.seed }))
+vi.mock('../src/main/db/seed-business', () => ({ seedBusiness: state.seedBusiness }))
 vi.mock('../src/main/engine/engine', () => ({
   Engine: class {
     dispose = state.dispose
@@ -128,6 +131,7 @@ vi.mock('../src/main/engine/engine', () => ({
   },
 }))
 vi.mock('../src/main/ipc', () => ({ registerIpc: state.registerIpc }))
+vi.mock('../src/main/ipc-business', () => ({ registerBusinessIpc: state.registerBusinessIpc }))
 vi.mock('../src/main/ipc-settings', () => ({ registerSettingsIpc: state.registerSettingsIpc }))
 vi.mock('../src/main/domain/backup', () => ({
   recoverInterruptedRestore: state.recover,
@@ -154,6 +158,7 @@ beforeEach(() => {
   state.resolvePaths.mockReset().mockReturnValue(state.paths)
   state.requireAvailable.mockReset()
   state.registerIpc.mockReset()
+  state.registerBusinessIpc.mockReset()
   state.registerSettingsIpc.mockReset()
   state.snapshot.mockReset()
   state.dbClose.mockReset().mockImplementation(() => { state.events.push('db-close') })

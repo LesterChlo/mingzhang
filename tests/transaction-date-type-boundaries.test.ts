@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Database } from 'better-sqlite3-multiple-ciphers'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import {
   confirm as confirmTx,
@@ -57,6 +57,7 @@ function account(name: string): number {
 beforeEach(() => {
   db = openSchemaDb(join(mkdtempSync(join(tmpdir(), 'mz-date-type-boundary-')), 'synthetic.db'))
   seed(db)
+  seedCustomCategories(db)
   accountId = account('现金')
   expenseCategoryId = (db.prepare("SELECT id FROM categories WHERE kind='expense' AND name='餐饮'").get() as { id: number }).id
   incomeCategoryId = (db.prepare("SELECT id FROM categories WHERE kind='income' AND name='生活费'").get() as { id: number }).id

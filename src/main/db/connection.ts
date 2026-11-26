@@ -128,8 +128,9 @@ export function openLedger(dbFile: string, secrets: SecretsStore): Database {
       )
     }
     if (existed) {
-      // 已存在库必须符合生产 schema（schema.sql+迁移）：错 schema 直接拒绝，
-      // 绝不由启动流程 initSchema 补成看似正常的新空账本。
+      // 已存在库：先跑增量迁移（幂等，v3+ 新表在此建），再校验生产契约。
+      // 迁移是保留旧数据的升级，不重建库；校验确保结构符合契约。
+      runMigrations(db)
       validateLedgerDatabase(db, '账本')
     }
     // Schema-equivalent uppercase columns must expose the canonical application row contract.
@@ -150,6 +151,7 @@ export function openLedger(dbFile: string, secrets: SecretsStore): Database {
 export function initSchemaIfEmpty(db: Database): void {
   const count = (db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number }).n
   if (count > 0) {
+    runMigrations(db)
     validateLedgerDatabase(db, '账本')
     return
   }

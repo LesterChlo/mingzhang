@@ -1,6 +1,6 @@
 // issue #28: only resolved batch_confirm gates are executed results.
 import { describe, expect, it } from 'vitest'
-import { openSchemaDb } from './helpers'
+import { openSchemaDb, seedCustomCategories } from './helpers'
 import { seed } from '../src/main/db/seed'
 import { executeBatch, prepareBatch } from '../src/main/domain/batch'
 import { applyBillPlan, stageBill } from '../src/main/domain/bill'
@@ -11,6 +11,7 @@ import { createRule } from '../src/main/domain/rules'
 function fixture() {
   const db = openSchemaDb(':memory:')
   seed(db)
+  seedCustomCategories(db)
   return db
 }
 

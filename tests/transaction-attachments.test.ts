@@ -61,7 +61,7 @@ it('关闭重开数据库后多附件列表/空覆盖一致，未迁移schema；
  const db=openSchemaDb(path);open.push(db)
  const saved=attachments.getTransactionAttachments(db,f.tx,f.dir)
  expect(saved.version).toBe(version);expect(saved.items.map(x=>x.ref)).toEqual([ref])
- expect(db.pragma('user_version',{simple:true})).toBe(2)
+ expect(db.pragma('user_version',{simple:true})).toBe(6)
  expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%attachment%'").all()).toEqual([])
 })
 

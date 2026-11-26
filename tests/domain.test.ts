@@ -40,13 +40,15 @@ beforeEach(() => {
 })
 
 describe('数据架构硬规则', () => {
-  it('seed 预置 4 账户 + 8 分类 + 3 设置', () => {
+  it('seed 预置 4 账户 + 18 分类 + 3 设置', () => {
     expect((db.prepare('SELECT COUNT(*) n FROM accounts').get() as { n: number }).n).toBe(4)
-    expect((db.prepare('SELECT COUNT(*) n FROM categories').get() as { n: number }).n).toBe(8)
+    expect((db.prepare('SELECT COUNT(*) n FROM categories').get() as { n: number }).n).toBe(18)
     expect((db.prepare('SELECT COUNT(*) n FROM settings').get() as { n: number }).n).toBe(3)
-    // 常用支出分类齐备：离线演示常见商户不再全落「其他」
-    const names = (db.prepare("SELECT name FROM categories WHERE kind='expense'").all() as { name: string }[]).map((r) => r.name)
-    for (const must of ['餐饮', '咖啡', '交通', '购物', '其他']) expect(names).toContain(must)
+    // 前 8 个历史分类 ID 固定，后 10 个为国人习惯细分。
+    const expenses = (db.prepare("SELECT name FROM categories WHERE kind='expense' ORDER BY id").all() as { name: string }[]).map((r) => r.name)
+    expect(expenses).toEqual(['餐饮', '咖啡', '交通', '购物', '其他', '居家', '娱乐', '医疗', '教育', '人情', '旅行'])
+    const incomes = (db.prepare("SELECT name FROM categories WHERE kind='income' ORDER BY id").all() as { name: string }[]).map((r) => r.name)
+    expect(incomes).toEqual(['生活费', '红包', '其他', '工资', '奖金', '理财', '兼职'])
   })
 
   it('R1 金额整数分：非整数分/零金额被 CHECK 拒绝', () => {

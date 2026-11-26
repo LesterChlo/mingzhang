@@ -11,10 +11,10 @@ function state(db: ReturnType<typeof openSchemaDb>) {
   return ['accounts', 'categories', 'settings', 'audit_log'].map(table => db.prepare(`SELECT * FROM ${table}`).all())
 }
 
-it('真正首启仍种 4账户/8分类/3设置，重复seed零新增且全库无变化', () => {
+it('真正首启仍种 4账户/18分类/3设置，重复seed零新增且全库无变化', () => {
   const db = openSchemaDb(':memory:')
   try {
-    expect(seed(db)).toEqual({ accounts: 4, categories: 8, settings: 3 })
+    expect(seed(db)).toEqual({ accounts: 4, categories: 18, settings: 3 })
     const before = state(db)
     expect(seed(db)).toEqual({ accounts: 0, categories: 0, settings: 0 })
     expect(state(db)).toEqual(before)
@@ -56,15 +56,17 @@ it('已初始化旧库使用原按名改账户的审计格式也可识别，坏J
     expect(state(db)).toEqual(before)
   } finally { db.close() }
 })
-it('旧库从未种过的咖啡/交通分类仍补齐，不因已有表非空一刀切跳过seed', () => {
+it('旧库从未种过的咖啡/交通及国人习惯分类仍补齐，不因已有表非空一刀切跳过seed', () => {
   const db = openSchemaDb(':memory:')
   try {
-    // 合成旧版初始化库：6分类，无咖啡/交通，原默认设置与账户已存在。
+    // 合成旧版初始化库：6分类，无咖啡/交通与新增预置，原默认设置与账户已存在。
     const ts = '2026-01-01T12:00:00+08:00'
     const insert = db.prepare('INSERT INTO categories(name,kind,created_at,updated_at) VALUES (?,?,?,?)')
     for (const [name, kind] of [['餐饮', 'expense'], ['购物', 'expense'], ['其他', 'expense'], ['生活费', 'income'], ['红包', 'income'], ['其他', 'income']]) insert.run(name, kind, ts, ts)
-    expect(seed(db)).toEqual({ accounts: 4, categories: 2, settings: 3 })
+    // 补齐：咖啡/交通(2) + 居家/娱乐/医疗/教育/人情/旅行(6) + 工资/奖金/理财/兼职(4) = 12，合计 18
+    expect(seed(db)).toEqual({ accounts: 4, categories: 12, settings: 3 })
     expect(seed(db)).toEqual({ accounts: 0, categories: 0, settings: 0 })
-    expect(db.prepare("SELECT name FROM categories WHERE kind='expense' ORDER BY name").all()).toHaveLength(5)
+    expect(db.prepare("SELECT name FROM categories WHERE kind='expense' ORDER BY name").all()).toHaveLength(11)
+    expect(db.prepare("SELECT name FROM categories WHERE kind='income' ORDER BY name").all()).toHaveLength(7)
   } finally { db.close() }
 })

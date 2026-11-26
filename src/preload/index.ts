@@ -48,6 +48,7 @@ const api: MingZhangApi = {
   rollbackRestore: () => ipcRenderer.invoke('mz:rollbackRestore'),
   newConversation: () => ipcRenderer.invoke('mz:newConversation'),
   exportBackup: (passphrase) => ipcRenderer.invoke('mz:exportBackup', passphrase),
+  exportLedger: (format, filter) => ipcRenderer.invoke('mz:exportLedger', format, filter),
   importBackup: (passphrase) => ipcRenderer.invoke('mz:importBackup', passphrase),
   setMock: (enabled) => ipcRenderer.invoke('mz:setMock', enabled),
   listLedger: (filter) => ipcRenderer.invoke('mz:listLedger', filter),
@@ -76,6 +77,48 @@ const api: MingZhangApi = {
   readArchive: (path) => ipcRenderer.invoke('mz:readArchive', path),
   continueSession: (path) => ipcRenderer.invoke('mz:continueSession', path),
   readAttachment: (relPath) => ipcRenderer.invoke('mz:readAttachment', relPath),
+  // 第三/四阶段：商品经营
+  listProducts: () => ipcRenderer.invoke('mz:listProducts'),
+  listProductsWithVariants: () => ipcRenderer.invoke('mz:listProductsWithVariants'),
+  getProduct: (id) => ipcRenderer.invoke('mz:getProduct', id),
+  getProductProfile: (id) => ipcRenderer.invoke('mz:getProductProfile', id),
+  updateProductPrice: (id, cents) => ipcRenderer.invoke('mz:updateProductPrice', id, cents),
+  // 规格
+  listVariants: (productId) => ipcRenderer.invoke('mz:listVariants', productId),
+  getVariant: (id) => ipcRenderer.invoke('mz:getVariant', id),
+  getVariantProfile: (id) => ipcRenderer.invoke('mz:getVariantProfile', id),
+  createVariant: (input) => ipcRenderer.invoke('mz:createVariant', input),
+  updateVariant: (input) => ipcRenderer.invoke('mz:updateVariant', input),
+  deleteVariant: (id) => ipcRenderer.invoke('mz:deleteVariant', id),
+  updateVariantPrice: (id, cents) => ipcRenderer.invoke('mz:updateVariantPrice', id, cents),
+  // 记账
+  recordSale: (input) => ipcRenderer.invoke('mz:recordSale', input),
+  recordPurchase: (input) => ipcRenderer.invoke('mz:recordPurchase', input),
+  recordRefund: (input) => ipcRenderer.invoke('mz:recordRefund', input),
+  recordCSIncome: (input) => ipcRenderer.invoke('mz:recordCSIncome', input),
+  recordOther: (input) => ipcRenderer.invoke('mz:recordOther', input),
+  recordExpense: (input) => ipcRenderer.invoke('mz:recordExpense', input),
+  listChannels: () => ipcRenderer.invoke('mz:listChannels'),
+  // 第五阶段：经营概览 + 盈亏测算
+  getBusinessOverview: (range) => ipcRenderer.invoke('mz:getBusinessOverview', range),
+  calculateProfit: (input) => ipcRenderer.invoke('mz:calculateProfit', input),
+  // 第六阶段：月度报表 + 趋势
+  getMonthlyReport: (month) => ipcRenderer.invoke('mz:getMonthlyReport', month),
+  listBusinessMonths: (limit) => ipcRenderer.invoke('mz:listBusinessMonths', limit),
+  getTrend: (months, endMonth) => ipcRenderer.invoke('mz:getTrend', months, endMonth),
+  // 第七阶段：Excel 导出 + 备份管理
+  exportBusinessExcel: (month) => ipcRenderer.invoke('mz:exportBusinessExcel', month),
+  createBusinessSnapshot: () => ipcRenderer.invoke('mz:createBusinessSnapshot'),
+  listBusinessSnapshots: () => ipcRenderer.invoke('mz:listBusinessSnapshots'),
+  getBackupsDir: () => ipcRenderer.invoke('mz:getBackupsDir'),
+  // 第八阶段：快捷记账模板
+  listTemplates: (kind) => ipcRenderer.invoke('mz:listTemplates', kind),
+  getTemplate: (id) => ipcRenderer.invoke('mz:getTemplate', id),
+  createTemplate: (input) => ipcRenderer.invoke('mz:createTemplate', input),
+  updateTemplate: (input) => ipcRenderer.invoke('mz:updateTemplate', input),
+  deleteTemplate: (id) => ipcRenderer.invoke('mz:deleteTemplate', id),
+  touchTemplate: (id) => ipcRenderer.invoke('mz:touchTemplate', id),
+  templateCounts: () => ipcRenderer.invoke('mz:templateCounts'),
   onChatEvent: (listener) => {
     const handler = (_e: unknown, evt: ChatEvent): void => listener(evt)
     ipcRenderer.on('mz:chat-event', handler)

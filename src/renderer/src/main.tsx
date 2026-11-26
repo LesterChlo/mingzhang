@@ -6,6 +6,9 @@ import './styles.css'
 import './styles/tokens.css'
 import './styles/shell.css'
 import './styles/finance-theme.css'
+// Creamy Cozy 奶油治愈风覆盖层：必须最后加载，才能统合上面各层的视觉细节。
+// 纯样式/变量层，不含任何业务逻辑。
+import './styles/cream-theme.css'
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

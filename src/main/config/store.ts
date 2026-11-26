@@ -1,6 +1,8 @@
 // 应用配置（config.json）：schema 带 version（决定记录 §4：多预设，2026-09-19 试用反馈修订）。
 // v2 = providers[]（各自带自检状态）+ activeProviderId；v1 单槽在 load 时自动迁移，不丢数据。
 // 本文件不含任何密钥。
+//
+// 第二阶段扩展：minimizeToTray / autoStartOllama / launchAtLogin（可选布尔，旧 config 缺失时用默认值）。
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 
@@ -47,6 +49,12 @@ export interface AppConfig {
   theme?: ThemeName
   providers: ProviderConfig[]
   activeProviderId: string | null
+  /** 第二阶段：关闭主窗口时最小化到系统托盘（默认 true）。 */
+  minimizeToTray?: boolean
+  /** 第二阶段：启动时自动拉起 Ollama（默认 true）。 */
+  autoStartOllama?: boolean
+  /** 第二阶段：开机自启动（默认 false）。 */
+  launchAtLogin?: boolean
 }
 
 const EMPTY: AppConfig = {
@@ -56,6 +64,9 @@ const EMPTY: AppConfig = {
   theme: DEFAULT_THEME,
   providers: [],
   activeProviderId: null,
+  minimizeToTray: true,
+  autoStartOllama: true,
+  launchAtLogin: false,
 }
 
 export class ConfigStore {
@@ -73,6 +84,9 @@ export class ConfigStore {
           theme: normalizeTheme(raw.theme),
           providers: Array.isArray(raw.providers) ? (raw.providers as ProviderConfig[]) : [],
           activeProviderId: (raw.activeProviderId as string | null) ?? null,
+          minimizeToTray: raw.minimizeToTray !== false,
+          autoStartOllama: raw.autoStartOllama !== false,
+          launchAtLogin: raw.launchAtLogin === true,
         }
       }
       if (raw.version === 1) {
@@ -97,6 +111,9 @@ export class ConfigStore {
           theme: normalizeTheme(raw.theme),
           providers,
           activeProviderId: providers[0]?.id ?? null,
+          minimizeToTray: raw.minimizeToTray !== false,
+          autoStartOllama: raw.autoStartOllama !== false,
+          launchAtLogin: raw.launchAtLogin === true,
         }
       }
       return { ...EMPTY }
@@ -113,6 +130,9 @@ export class ConfigStore {
       theme: normalizeTheme(config.theme),
       providers: config.providers,
       activeProviderId: config.activeProviderId,
+      minimizeToTray: config.minimizeToTray !== false,
+      autoStartOllama: config.autoStartOllama !== false,
+      launchAtLogin: config.launchAtLogin === true,
     }
     writeFileSync(this.file, JSON.stringify(payload, null, 2), 'utf8')
   }

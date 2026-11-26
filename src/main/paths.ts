@@ -1,6 +1,10 @@
 // 数据目录解析（决定记录 §1）：便携标记优先，否则 %APPDATA%\mingzhang。
 // 优先级：MZ_DATA_DIR 环境变量（开发/测试）> 程序目录旁可写 data/ > %APPDATA%\mingzhang。
 // 注意：开发模式下 exe 在 node_modules 里，跳过便携探测，避免污染仓库外目录。
+//
+// 第二阶段新增 iconPath：托盘/通知图标定位。
+//   打包后 = exe 同目录的 icon.ico（交付时复制过去）；
+//   开发时 = cwd/build/icon.ico。
 
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
@@ -16,6 +20,7 @@ export interface ResolvedPaths {
   backupsDir: string
   configFile: string
   portable: boolean
+  iconPath: string
 }
 
 function isWritable(dir: string): boolean {
@@ -32,11 +37,12 @@ function isWritable(dir: string): boolean {
 export function resolvePaths(): ResolvedPaths {
   let dataDir: string | undefined
   let portable = false
+  let exeDir: string | undefined
 
   if (process.env.MZ_DATA_DIR) {
     dataDir = process.env.MZ_DATA_DIR
   } else if (app.isPackaged) {
-    const exeDir = join(app.getPath('exe'), '..')
+    exeDir = join(app.getPath('exe'), '..')
     const candidate = join(exeDir, 'data')
     if (existsSync(candidate) && isWritable(candidate)) {
       dataDir = candidate
@@ -58,6 +64,11 @@ export function resolvePaths(): ResolvedPaths {
     mkdirSync(d, { recursive: true })
   }
 
+  // 托盘图标：打包后 exe 同目录 icon.ico；开发时 cwd/build/icon.ico
+  const iconPath = exeDir
+    ? join(exeDir, 'icon.ico')
+    : join(process.cwd(), 'build', 'icon.ico')
+
   return {
     dataDir,
     dbFile: join(dataDir, 'mingzhang.db'),
@@ -68,5 +79,6 @@ export function resolvePaths(): ResolvedPaths {
     backupsDir,
     configFile: join(dataDir, 'config.json'),
     portable,
+    iconPath,
   }
 }

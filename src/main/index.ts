@@ -1,15 +1,19 @@
 // Electron 主进程入口：生命周期、窗口、单实例锁、模块装配。
 // 启动顺序（决定记录 §6 / 硬约束 4）：safeStorage 可用性硬检查 → 数据目录 → 加密账本 → 引擎。
 
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, Tray } from 'electron'
 import { join } from 'node:path'
 import { resolvePaths } from './paths'
+import { ensureOllama, isOllamaRunning, restartOllama, type OllamaStatus } from './ollama'
+import { createTray, destroyTray, notify, trayExists } from './tray'
 import { SecretsStore, migrateLegacyProviderKey } from './secrets/store'
 import { ConfigStore, normalizeTheme } from './config/store'
 import { openLedger, initSchemaIfEmpty, readStartupDek } from './db/connection'
 import { seed } from './db/seed'
+import { seedBusiness } from './db/seed-business'
 import { Engine } from './engine/engine'
 import { registerIpc } from './ipc'
+import { registerBusinessIpc } from './ipc-business'
 import { registerSettingsIpc } from './ipc-settings'
 import { autoSnapshotIfNeeded, sweepPlainResidues, recoverInterruptedRestore } from './domain/backup'
 import { createEngineRegistry } from './engine/registry'
@@ -17,7 +21,8 @@ import { globalRestoreGate } from './domain/restore-gate'
 import { showStartupFailure } from './startup-failure'
 import type { ChatEvent } from '../shared/types'
 
-app.setName('mingzhang')
+// 应用显示名改为「记账中心」；账本数据目录仍由 paths.ts 显式解析到 %APPDATA%\mingzhang，不随此名迁移。
+app.setName('jizhangzhongxin')
 
 // C·测试硬化：记录全部 IPC handler 通道，供巡检做“preload invoke ⊆ handler”对账（防静默丢 handler）
 const registeredChannels = new Set<string>()
@@ -29,6 +34,8 @@ ipcMain.handle = ((channel: string, listener: unknown) => {
 globalThis.__mzIpcChannels = registeredChannels
 
 let win: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 const engines = createEngineRegistry<Engine>()
 let db: ReturnType<typeof openLedger> | null = null
 let paths: ReturnType<typeof resolvePaths> | null = null
@@ -57,7 +64,7 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1200,
     height: 820,
-    title: '明账',
+    title: '记账中心',
     backgroundColor: '#DCEFE4',
     autoHideMenuBar: true,
     webPreferences: {
@@ -74,7 +81,15 @@ function createWindow(): void {
   } else {
     win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
   }
-  win.on('closed', () => {
+  // 第二阶段：关闭按钮按设置最小化到托盘，而非直接关闭。
+  // isQuitting 区分「托盘完全退出」与「点窗口关闭按钮」。
+  createdWindow.on('close', (e) => {
+    if (!isQuitting && config?.load().minimizeToTray !== false && trayExists()) {
+      e.preventDefault()
+      createdWindow.hide()
+    }
+  })
+  createdWindow.on('closed', () => {
     if (win === createdWindow) win = null
   })
 }
@@ -119,6 +134,7 @@ if (!gotLock) {
     // 收敛确认后才允许初始化：已存在库先完整校验；纯新库才建表/seed。
     initSchemaIfEmpty(db)
     seed(db)
+    seedBusiness(db)
 
     engines.set(new Engine(db, paths, config, secrets, broadcast))
 
@@ -137,8 +153,49 @@ if (!gotLock) {
       },
       { dataDir: paths.dataDir, dbFile: paths.dbFile },
     )
+    registerBusinessIpc(() => db, () => paths?.backupsDir ?? null)
 
     createWindow()
+
+    // 第二阶段：异步拉起 Ollama（detached，不阻塞窗口显示）+ 创建系统托盘。
+    const cfg0 = config.load()
+    // 测试环境（VITEST）跳过 Ollama 自动拉起，避免真实启动服务与定时器泄漏。
+    if (!process.env.VITEST) {
+      void ensureOllama(cfg0.autoStartOllama !== false).then((st: OllamaStatus) => {
+        if (!st.running && cfg0.autoStartOllama !== false) {
+          notify('记账中心', '本地模型服务未就绪，AI 对话暂不可用（记账功能正常）')
+        }
+      })
+    }
+    // 第二阶段：托盘 + 开机自启。测试环境/平台不支持时优雅跳过，不阻断启动。
+    try {
+      tray = createTray({
+        iconPath: paths.iconPath,
+        getWindow: () => win,
+        onRestartOllama: async () => {
+          notify('记账中心', '正在重启 Ollama 模型服务…')
+          const ok = await restartOllama()
+          notify('记账中心', ok ? 'Ollama 模型服务已重启' : 'Ollama 重启失败，请检查 D:\\Ollama')
+        },
+        onShowStatus: async () => {
+          const st = await isOllamaRunning()
+          notify('记账中心', st.running ? `模型服务运行中（v${st.version ?? '?'}）` : '模型服务未运行')
+        },
+        onQuit: () => {
+          isQuitting = true
+          app.quit()
+        },
+      })
+    } catch {
+      tray = null
+    }
+    // 开机自启（按设置）
+    try {
+      app.setLoginItemSettings?.({ openAtLogin: cfg0.launchAtLogin === true })
+    } catch {
+      /* 测试环境不支持时忽略 */
+    }
+
     await startEngine()
     // A7 启动检查：上月月报没生成过则补一次（只记 agent_runs，不打扰）
     engines.tryGet()?.startupReport()
@@ -223,11 +280,17 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', () => {
-    app.quit()
+    // 第二阶段：托盘模式下窗口隐藏不退出；正在退出或无托盘时才 quit。
+    if (isQuitting || !trayExists()) {
+      app.quit()
+    }
   })
 
   app.on('before-quit', () => {
+    isQuitting = true
+    destroyTray()
     engines.tryGet()?.dispose()
     db?.close()
+    // 第二阶段：主程序退出不杀 Ollama（detached 独立进程），保留用户已有服务
   })
 }

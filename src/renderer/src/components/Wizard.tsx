@@ -250,7 +250,7 @@ export function Wizard({ mode, initial, onDone, onCancel }: Props) {
         <section className="card">
           <h3>视觉自检</h3>
           <p className="muted">
-            明账支持拖入支付截图直接识别。自检会给模型看一张内置测试图，确认它真的能「看图」（不只是声明支持）。
+            记账中心支持拖入支付截图直接识别。自检会给模型看一张内置测试图，确认它真的能「看图」（不只是声明支持）。
           </p>
           {visionResult && (
             <p className={visionResult.ok ? 'ok' : 'err'}>

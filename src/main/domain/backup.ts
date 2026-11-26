@@ -33,7 +33,7 @@ import { runMigrations } from '../db/migrations'
 import { foldSqliteIdentifier } from '../db/sqlite-identifier'
 import schemaSqlText from '../db/schema.sql?raw'
 
-const SNAPSHOT_KEEP = 7
+const SNAPSHOT_KEEP = 10
 const SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000
 const CIPHER = 'chacha20'
 const BACKUP_MAGIC = 'MZBK'
@@ -1306,7 +1306,7 @@ export async function importPassphraseBackupToPlain(
 ): Promise<void> {
   const blob = readFileSync(backupFile)
   if (blob.length < 8 + 16 + 12 + 16 || blob.subarray(0, 4).toString('latin1') !== BACKUP_MAGIC) {
-    throw new Error('不是有效的明账备份包')
+    throw new Error('不是有效的记账中心备份包')
   }
   const version = blob.readUInt32BE(4)
   if (version !== BACKUP_VERSION) throw new Error(`备份包版本不支持（v${version}）`)

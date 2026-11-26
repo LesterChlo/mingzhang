@@ -1,7 +1,7 @@
 {
   "name": "mingzhang",
   "version": "0.1.0",
-  "description": "明账 —— 本地优先的 AI 记账桌面应用（Windows · Electron + TypeScript）",
+  "description": "记账中心 —— 本地优先的 AI 记账桌面应用（Windows · Electron + TypeScript）",
   "author": "LesterChlo (https://github.com/LesterChlo)",
   "license": "MIT",
   "repository": {
@@ -47,7 +47,7 @@
   },
   "build": {
     "appId": "dev.mingzhang.pi",
-    "productName": "mingzhang",
+    "productName": "jizhangzhongxin",
     "directories": {
       "app": ".scratch/package-app",
       "output": "release"
@@ -75,15 +75,15 @@
           ]
         }
       ],
-      "artifactName": "mingzhang-${version}-${arch}.${ext}"
+      "artifactName": "jizhangzhongxin-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "明账"
+      "shortcutName": "记账中心"
     },
     "icon": "build/icon.ico"
   },
-  "productName": "mingzhang"
+  "productName": "jizhangzhongxin"
 }

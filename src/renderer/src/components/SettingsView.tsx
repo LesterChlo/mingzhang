@@ -442,7 +442,7 @@ function ArchiveSection({ onContinued }: { onContinued?: () => void }) {
     <section className="card">
       <h3>会话归档</h3>
       <p className="muted small">
-        「新开对话」后旧对话归档在这里，可只读查看（含你发的截图与明账的回复），也能「继续此对话」把引擎切回那段会话接着聊；账务数据不受影响。
+        「新开对话」后旧对话归档在这里，可只读查看（含你发的截图与记账中心的回复），也能「继续此对话」把引擎切回那段会话接着聊；账务数据不受影响。
       </p>
       {loaded && sessions.length === 0 && <p className="muted">还没有归档会话。</p>}
       {!loaded && <p className="muted">加载中…</p>}

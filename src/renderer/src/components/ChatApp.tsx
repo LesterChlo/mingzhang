@@ -493,7 +493,7 @@ export function ChatApp({ state, reload, onOpenSettings, onOpenWizard, hidden, s
   return (
     <div className={`app${hidden ? ' hidden' : ''}`}>
       <header>
-        <span className="logo">明账</span>
+        <span className="logo">记账中心</span>
         <span className="muted model">
           {state.mock
             ? '离线演示（mock · 不联网）'
@@ -593,7 +593,7 @@ export function ChatApp({ state, reload, onOpenSettings, onOpenWizard, hidden, s
               <div className="empty-state">
                 <h2>先配一个模型，就能开始记账</h2>
                 <p className="muted">
-                  明账的账本 / 备份 / 待收尾现在就能浏览；配好模型后即可对话记账、拖截图入账。
+                  记账中心的账本 / 备份 / 待收尾现在就能浏览；配好模型后即可对话记账、拖截图入账。
                 </p>
                 <div className="empty-actions">
                   <button className="primary" onClick={onOpenWizard}>
@@ -761,7 +761,7 @@ export function ChatApp({ state, reload, onOpenSettings, onOpenWizard, hidden, s
               </label>
               <textarea
                 value={input}
-                placeholder={sending ? '明账正在处理…' : '说一句账，如「星巴克 35」；或拖入支付截图'}
+                placeholder={sending ? '记账中心正在处理…' : '说一句账，如「星巴克 35」；或拖入支付截图'}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {

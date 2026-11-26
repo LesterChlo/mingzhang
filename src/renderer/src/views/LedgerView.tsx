@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { AccountOption, LedgerPageDTO, LedgerRow } from '../../../shared/types'
+import type { AccountOption, LedgerExportFormat, LedgerPageDTO, LedgerRow } from '../../../shared/types'
 import { useInbox } from '../shell/inboxStore'
 import {
   DEFAULT_FILTERS,
@@ -84,6 +84,8 @@ export function LedgerView({ initialFilter }: { initialFilter?: Partial<LedgerFi
   const [maxDraft, setMaxDraft] = useState('')
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [reloadKey, setReloadKey] = useState(0)
+  /** 导出中的格式：防止重复点选；null = 空闲。 */
+  const [exporting, setExporting] = useState<LedgerExportFormat | null>(null)
   const debounce = useRef<{ q: number | null; amount: number | null }>({ q: null, amount: null })
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -221,6 +223,23 @@ export function LedgerView({ initialFilter }: { initialFilter?: Partial<LedgerFi
     const el = document.querySelector('input[aria-label="速记行"]')
     if (el instanceof HTMLInputElement) el.focus()
   }, [])
+
+  /** 按当前筛选导出全量（分页由主进程处理），路径由主进程保存对话框决定。 */
+  const onExport = useCallback(
+    async (format: LedgerExportFormat) => {
+      if (exporting) return
+      setExporting(format)
+      try {
+        const saved = await window.mz.exportLedger(format, toLedgerFilter(filters, 1))
+        if (saved) notify({ text: `已导出：${saved}`, tone: 'ok' })
+      } catch (e) {
+        notify({ text: `导出失败：${humanError(e)}`, tone: 'err' })
+      } finally {
+        setExporting(null)
+      }
+    },
+    [exporting, filters, notify],
+  )
 
   const showSkeleton = loading && !data
   const isEmptyLedger = !loading && !error && total === 0 && allTotal === 0 && chips.length === 0
@@ -424,6 +443,29 @@ export function LedgerView({ initialFilter }: { initialFilter?: Partial<LedgerFi
             （口径不含已删除
             {filters.state ? '；且服务端 agg 暂不跟随「状态」筛选，故可能大于下方行数' : ''}）
           </span>
+        </div>
+
+        {/* ---------- 导出：按当前筛选导出全量，文件由主进程对话框选定 ---------- */}
+        <div className="mz-exportbar" data-testid="ledger-exportbar">
+          <span className="mz-text-3">按当前筛选导出</span>
+          <button
+            type="button"
+            className="mz-btn mz-btn-ghost mz-btn-sm"
+            data-testid="ledger-export-csv"
+            disabled={exporting !== null || total === 0}
+            onClick={() => void onExport('csv')}
+          >
+            {exporting === 'csv' ? '导出中…' : '导出 CSV'}
+          </button>
+          <button
+            type="button"
+            className="mz-btn mz-btn-ghost mz-btn-sm"
+            data-testid="ledger-export-xlsx"
+            disabled={exporting !== null || total === 0}
+            onClick={() => void onExport('xlsx')}
+          >
+            {exporting === 'xlsx' ? '导出中…' : '导出 Excel'}
+          </button>
         </div>
 
         {error && (
